@@ -53,8 +53,10 @@ final class AppCore {
     let extensions: ExtensionManager
     let chatHistory: ChatHistoryStore
     let aiChat: AIChatState
-    let aiSettings = AISettingsStore(
-        isAppleIntelligenceAvailable: { AppleIntelligenceProvider.status().isAvailable })
+    let aiSettings = AISettingsStore(isAppleIntelligenceAvailable: {
+        guard #available(macOS 26.0, *) else { return false }
+        return AppleIntelligenceProvider.status().isAvailable
+    })
     let mcpSettings = MCPSettingsStore()
     let mcp = MCPServerManager()
     let quickActionSettings = QuickActionSettingsStore()
@@ -510,10 +512,15 @@ final class AppCore {
         else {
             throw AIProviderError.unavailable("Choose a model in Settings \u{2192} Quick Actions.")
         }
+        if #available(macOS 26.0, *) {
+            return try AIProviderFactory.make(
+                selection: selection, settings: aiSettings, subscription: chatGPTSubscription,
+                installedAI: installedAI,
+                guardrails: .permissiveContentTransformations)
+        }
         return try AIProviderFactory.make(
             selection: selection, settings: aiSettings, subscription: chatGPTSubscription,
-            installedAI: installedAI,
-            guardrails: .permissiveContentTransformations)
+            installedAI: installedAI)
     }
 
     // MARK: - Feature switches

@@ -48,6 +48,7 @@ enum TextTranslator {
         @unknown default:
             throw Failure.unsupported
         }
+        guard #available(macOS 26.0, *) else { throw Failure.unsupported }
         do {
             let session = TranslationSession(installedSource: source, target: target)
             return try await session.translate(text).targetText
