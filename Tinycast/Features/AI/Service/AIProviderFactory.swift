@@ -1,5 +1,5 @@
-import FoundationModels
 import Foundation
+import FoundationModels
 
 @MainActor
 enum AIProviderFactory {
@@ -18,7 +18,30 @@ enum AIProviderFactory {
             installedAI: installedAI, keyStore: keyStore)
     }
 
+    /// All routes except the macOS 26 on-device model use this entry point.
+    static func make(
+        selection: AIModelSelection,
+        settings: AISettingsStore,
+        subscription: ChatGPTSubscriptionManager,
+        installedAI: InstalledAIManager,
+        keyStore: KeychainSecretStore = .aiAPIKeys
+    ) throws -> any AIProvider {
+        if case .appleIntelligence = selection {
+            guard #available(macOS 26.0, *) else {
+                throw AIProviderError.unavailable("Apple Intelligence requires macOS 26.")
+            }
+            if let message = AppleIntelligenceProvider.status().message {
+                throw AIProviderError.unavailable(message)
+            }
+            return AppleIntelligenceProvider()
+        }
+        return try makeExternal(
+            selection: selection, settings: settings, subscription: subscription,
+            installedAI: installedAI, keyStore: keyStore)
+    }
+
     /// `guardrails` reaches only the on-device model, the one route that filters locally.
+    @available(macOS 26.0, *)
     static func make(
         selection: AIModelSelection,
         settings: AISettingsStore,
@@ -27,12 +50,27 @@ enum AIProviderFactory {
         keyStore: KeychainSecretStore = .aiAPIKeys,
         guardrails: SystemLanguageModel.Guardrails = .default
     ) throws -> any AIProvider {
-        switch selection {
-        case .appleIntelligence:
+        if case .appleIntelligence = selection {
             if let message = AppleIntelligenceProvider.status().message {
                 throw AIProviderError.unavailable(message)
             }
             return AppleIntelligenceProvider(guardrails: guardrails)
+        }
+        return try makeExternal(
+            selection: selection, settings: settings, subscription: subscription,
+            installedAI: installedAI, keyStore: keyStore)
+    }
+
+    private static func makeExternal(
+        selection: AIModelSelection,
+        settings: AISettingsStore,
+        subscription: ChatGPTSubscriptionManager,
+        installedAI: InstalledAIManager,
+        keyStore: KeychainSecretStore
+    ) throws -> any AIProvider {
+        switch selection {
+        case .appleIntelligence:
+            throw AIProviderError.unavailable("Apple Intelligence requires macOS 26.")
         case .codex(let model, let effort):
             guard settings.enabledInstalledProviders.contains(.codex) else {
                 throw AIProviderError.unavailable("Codex is disabled in AI Settings.")

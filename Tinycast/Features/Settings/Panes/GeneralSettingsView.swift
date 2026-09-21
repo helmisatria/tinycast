@@ -285,20 +285,24 @@ private struct PaletteTransparencyRow: View {
             subtitleLineLimit: 2,
             anchor: .generalAppearance
         ) {
-            Slider(
-                value: value, in: -100...100, step: 50, neutralValue: 0,
-                label: { EmptyView() },
-                minimumValueLabel: { Text("Less") },
-                maximumValueLabel: { Text("More") },
-                tick: { SliderTick($0) },
-                onEditingChanged: { editing in
-                    isEditing = editing
-                    if !editing, let draft {
-                        settings.paletteTransparency = Int(draft)
-                        self.draft = nil
-                    }
+            Group {
+                if #available(macOS 26.0, *) {
+                    Slider(
+                        value: value, in: -100...100, step: 50, neutralValue: 0,
+                        label: { EmptyView() },
+                        minimumValueLabel: { Text("Less") },
+                        maximumValueLabel: { Text("More") },
+                        tick: { SliderTick($0) },
+                        onEditingChanged: updateEditing)
+                } else {
+                    Slider(
+                        value: value, in: -100...100, step: 50,
+                        label: { EmptyView() },
+                        minimumValueLabel: { Text("Less") },
+                        maximumValueLabel: { Text("More") },
+                        onEditingChanged: updateEditing)
                 }
-            )
+            }
             .labelsHidden()
             .accessibilityLabel("Background transparency")
             .frame(width: Theme.Size.paletteTransparencySlider)
@@ -307,6 +311,14 @@ private struct PaletteTransparencyRow: View {
                 settings.paletteTransparency = 0
             }
             .help("Restore the default background in Light and Dark.")
+        }
+    }
+
+    private func updateEditing(_ editing: Bool) {
+        isEditing = editing
+        if !editing, let draft {
+            settings.paletteTransparency = Int(draft)
+            self.draft = nil
         }
     }
 }
