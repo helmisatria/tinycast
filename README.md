@@ -4,13 +4,13 @@
 RAM.**
 
 <p align="center">
-  <a href="https://github.com/abue-ammar/tinycast/releases/latest">
+  <a href="https://github.com/helmisatria/tinycast/releases/latest">
     <img alt="Latest release"
-         src="https://img.shields.io/github/v/release/abue-ammar/tinycast?sort=semver&style=flat&label=release&color=1F6FEB"></a>
+         src="https://img.shields.io/github/v/release/helmisatria/tinycast?sort=semver&style=flat&label=release&color=1F6FEB"></a>
   <img alt="Swift 6.0"
        src="https://img.shields.io/badge/Swift-6.0-F05138?style=flat&logo=swift&logoColor=white">
-  <img alt="macOS 26 or later"
-       src="https://img.shields.io/badge/macOS-26%2B-000000?style=flat&logo=apple&logoColor=white">
+  <img alt="macOS 15 or later"
+       src="https://img.shields.io/badge/macOS-15%2B-000000?style=flat&logo=apple&logoColor=white">
   <a href="LICENSE">
     <img alt="License: AGPL-3.0"
          src="https://img.shields.io/badge/License-AGPL--3.0-3DA639?style=flat"></a>
@@ -30,6 +30,19 @@ For anything private, email [iabueammar@gmail.com](mailto:iabueammar@gmail.com).
 <p align="center">
   <img src="docs/screenshot.png" alt="Tinycast command palette" width="720">
 </p>
+
+## About this fork
+
+This fork publishes a macOS 15 Sequoia build of Tinycast. The
+[upstream project](https://github.com/abue-ammar/tinycast) targets macOS 26 or later.
+
+The [compatibility branch](https://github.com/helmisatria/tinycast/tree/macos15-ai-compat-latest)
+replaces Liquid Glass with material-backed controls on macOS 15 and uses public APIs available on
+Sequoia. Remote and installed AI providers remain available. Apple Intelligence still requires
+macOS 26. The Sequoia release is a universal build for Apple silicon and Intel Macs.
+
+The fork keeps upstream features and limits its own changes to macOS 15 compatibility and release
+packaging.
 
 ## Support
 
@@ -77,6 +90,14 @@ keep it actively maintained. GitHub Sponsors isn't available in my country, so p
 
 ## Install
 
+### macOS 15 Sequoia
+
+Download the universal DMG from the
+[latest fork release](https://github.com/helmisatria/tinycast/releases/latest). It supports both Apple
+silicon and Intel Macs.
+
+### macOS 26 or newer
+
 First, add the tap:
 
 ```sh
@@ -98,8 +119,9 @@ Want early builds? `brew install --cask tinycast@beta` puts `Tinycast Beta.app` 
 app, with its own settings and permissions. Apple silicon, macOS 26+.
 
 Homebrew clears the macOS quarantine flag on every install and update, so there is nothing else to
-run. Downloading a DMG from [Releases](https://github.com/abue-ammar/tinycast/releases) instead?
-Tinycast is self-signed, so clear the flag once:
+run. Downloading a DMG from the fork or
+[upstream releases](https://github.com/abue-ammar/tinycast/releases) instead? Tinycast is self-signed,
+so clear the flag once:
 `xattr -dr com.apple.quarantine "/Applications/Tinycast.app"`.
 
 ## Permissions
