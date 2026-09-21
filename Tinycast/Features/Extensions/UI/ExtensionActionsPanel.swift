@@ -88,9 +88,8 @@ struct ExtensionActionsPanel: View {
         }
         .padding(metrics.spacing.sm)
         .frame(width: panel.width)
-        .glassEffect(
-            .regular, in: RoundedRectangle(cornerRadius: metrics.radius.menuPanel, style: .continuous)
-        )
+        .frostedMenu(
+            in: RoundedRectangle(cornerRadius: metrics.radius.menuPanel, style: .continuous))
     }
 
     /// Armed only once the pointer has moved of its own accord, so a scroll past it lights nothing.
