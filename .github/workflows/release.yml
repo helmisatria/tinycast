@@ -1,5 +1,7 @@
 name: Release
 
+# Keep this workflow registered on the fork's default branch so compatibility branches can run it.
+
 # Shown in the Actions list instead of a bare "Release" — carries the version + channel.
 run-name: "Tinycast ${{ inputs.version }} · ${{ inputs.channel }} #${{ github.run_number }}"
 
