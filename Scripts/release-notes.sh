@@ -54,7 +54,7 @@ CHANGELOG="$(printf '%s\n' "$GENERATED" | sed -E \
     if [ -n "$COMPARE_URL" ]; then printf ' [Full changelog](%s)' "$COMPARE_URL"; fi
     printf '\n\n'
     if [[ "$VERSION" == *-sequoia ]]; then
-        printf '%s\n' "Download the DMG attached to this release. The Universal DMG supports both Apple silicon and Intel Macs."
+        printf '%s\n' "Use the regular DMG on Apple silicon. If this release also has a Universal DMG, use it on an Intel Mac."
     else
         printf '%s\n' "**Recommended:** install via Homebrew — it clears the quarantine flag automatically on every install and update, so there's nothing to run by hand:"
         printf '```sh\nbrew trust --tap abue-ammar/tinycast\nbrew install --cask abue-ammar/tinycast/%s\n```\n' "$CASK"
