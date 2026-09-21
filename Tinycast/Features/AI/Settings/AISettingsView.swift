@@ -105,8 +105,8 @@ struct AISettingsView: View {
     /// Why the on-device route is missing from the picker, or `nil` when it is there.
     private var appleIntelligenceReason: String? {
         guard #available(macOS 26.0, *) else { return "Apple Intelligence requires macOS 26." }
-        return settings.isAppleIntelligenceAvailable()
-            ? nil : AppleIntelligenceProvider.status().message
+        guard !settings.isAppleIntelligenceAvailable() else { return nil }
+        return AppleIntelligenceProvider.status().message
     }
 
     private var providerSummary: String {
