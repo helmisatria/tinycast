@@ -34,6 +34,9 @@ struct ExtensionTests {
                 return ExtensionRuntime.jsonString(
                     from: try await ExtensionAsyncProcess.wait(arguments.first))
             }
+            if api == "proc", method == "read" {
+                return ExtensionRuntime.jsonString(from: try await ExtensionAsyncProcess.read(arguments))
+            }
             if api == "fetch" {
                 return ExtensionRuntime.jsonString(from: try await fetcher.request(arguments.first))
             }
@@ -196,6 +199,7 @@ struct ExtensionTests {
         await runtimeChecks()
         await searchAccessoryRuntimeChecks()
         await nodeContractChecks()
+        await webAssemblyChecks()
         await asyncComponentChecks()
         await menuBarRuntimeChecks()
         await menuBarHostChecks()
@@ -281,21 +285,29 @@ struct ExtensionTests {
                 }, alternate: React.createElement(MenuBarExtra.Item, { title: "Alternate", onAction() {} }) }));
             };
             """#
-        await runtime.start(session: "bar", code: code, file: URL(fileURLWithPath: "/tmp/menu.js"),
-                            mode: .menuBar, context: context)
+        await runtime.start(
+            session: "bar", code: code, file: URL(fileURLWithPath: "/tmp/menu.js"),
+            mode: .menuBar, context: context)
         await settle()
         let root = recorder.trees.last?.activeRoot
         check("menu-bar renders in JavaScriptCore", root?.type == "MenuBarExtra", recorder.failures.joined())
-        check("background launch reaches props and environment", root?.string("title") == "background|background")
+        check(
+            "background launch reaches props and environment",
+            root?.string("title") == "background|background")
         check("launch context reaches props", root?.string("tooltip") == "fixture")
-        check("alternate survives serialization", root?.children.first?.node("alternate")?.handler("onAction") != nil)
+        check(
+            "alternate survives serialization",
+            root?.children.first?.node("alternate")?.handler("onAction") != nil)
         if let handler = root?.children.first?.handler("onAction") {
-            await runtime.dispatch(session: "bar", handler: handler, payload: #"[{"type":"right-click"}]"#,
-                                   completesSession: true)
+            await runtime.dispatch(
+                session: "bar", handler: handler, payload: #"[{"type":"right-click"}]"#,
+                completesSession: true)
             check("menu action does not finish before its promise", !recorder.finished)
             await settle()
             check("menu action finishes after its promise", recorder.finished)
-            check("menu action forwards event", recorder.trees.last?.activeRoot?.string("title") == "right-click")
+            check(
+                "menu action forwards event",
+                recorder.trees.last?.activeRoot?.string("title") == "right-click")
         }
         await runtime.stop(session: "bar")
     }
@@ -1498,6 +1510,36 @@ struct ExtensionTests {
         runtime.shutdown()
     }
 
+    /// sql.js loads through `WebAssembly.instantiate`, whose promise never settled on the JS queue.
+    @MainActor
+    static func webAssemblyChecks() async {
+        let (runtime, host, recorder) = makeRuntime()
+        try? await runtime.boot(
+            config: .current(supportDirectory: FileManager.default.temporaryDirectory))
+        let command = """
+            module.exports.default = async () => {
+              const add = "AGFzbQEAAAABBwFgAn9/AX8DAgEABwcBA2FkZAAACgkBBwAgACABags=";
+              const bytes = Buffer.from(add, "base64");
+              const { module, instance } = await WebAssembly.instantiate(bytes);
+              const compiled = await WebAssembly.instantiate(await WebAssembly.compile(bytes));
+              const invalid = await WebAssembly.instantiate(new Uint8Array([0, 1, 2])).then(
+                () => "resolved", (error) => error instanceof WebAssembly.CompileError);
+              const sum = instance.exports.add(2, 3) + compiled.exports.add(4, 5);
+              const isModule = module instanceof WebAssembly.Module;
+              await require("@raycast/api").showHUD(`${isModule} ${sum} ${invalid}`);
+            };
+            """
+        await runtime.start(
+            session: "wasm", code: command, file: URL(fileURLWithPath: "/tmp/wasm.js"),
+            mode: .noView, context: launchContext(mode: .noView))
+        await settle()
+        check(
+            "WebAssembly promise APIs settle", host.huds == ["true 14 true"],
+            "\(host.huds) \(recorder.failures.joined(separator: "|"))")
+        await runtime.stop(session: "wasm")
+        runtime.shutdown()
+    }
+
     /// `withAccessToken` hands React an async component, which only renders while the promise it
     /// suspended on comes back rather than being remade every attempt (#519).
     @MainActor
@@ -1688,7 +1730,8 @@ struct ExtensionTests {
             exit(1)
         }
         if target.mode == .menuBar, ProcessInfo.processInfo.environment["EXT_TEST_MENU_BAR"] != nil {
-            await runInstalledMenuBar(InstalledExtension(manifest: manifest, directory: directory), command: target)
+            await runInstalledMenuBar(
+                InstalledExtension(manifest: manifest, directory: directory), command: target)
             exit(failures == 0 ? 0 : 1)
         }
         let bundle = directory.appendingPathComponent("\(target.name).js")

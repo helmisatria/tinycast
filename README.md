@@ -36,7 +36,7 @@ For anything private, email [iabueammar@gmail.com](mailto:iabueammar@gmail.com).
 This fork publishes a macOS 15 Sequoia build of Tinycast. The
 [upstream project](https://github.com/abue-ammar/tinycast) targets macOS 26 or later.
 
-The [compatibility branch](https://github.com/helmisatria/tinycast/tree/macos15-ai-compat-latest)
+The [fork main branch](https://github.com/helmisatria/tinycast/tree/main)
 replaces Liquid Glass with material-backed controls on macOS 15 and uses public APIs available on
 Sequoia. Remote and installed AI providers remain available. Apple Intelligence still requires
 macOS 26. The Sequoia release is a universal build for Apple silicon and Intel Macs.
@@ -83,7 +83,9 @@ keep it actively maintained. GitHub Sponsors isn't available in my country, so p
 - **Notes** — an unlimited collection of plain Markdown files in one floating editor, searchable from
   the palette and rendered as you write.
 - **Emoji picker** — a searchable emoji grid, one keystroke away.
-- **AI chat** — use your own key or an installed AI account, chat from the palette. Off out of the box, like every AI feature.
+- **AI chat** — use your own key or an installed AI account: ask Quick AI from the palette, or keep
+  longer conversations in the AI Chat window, with a searchable, pinnable history. Off out of the box,
+  like every AI feature.
 - **Quick Actions** — fix grammar, rewrite, translate or summarize the selected text in any app.
 - **Raycast extensions** — run the ones you already have natively, rendered as SwiftUI.
 - **Backup and import** — export your settings to a file, or import your setup from Raycast.

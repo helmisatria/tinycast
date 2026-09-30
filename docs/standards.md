@@ -10,6 +10,10 @@ When this document and the code disagree, the code is probably right and this fi
 
 ## Posture
 
+This fork supports macOS 15 and newer. Availability checks and the Network framework's
+`NWListener` / `NWConnection` APIs keep upstream features usable on Sequoia. The latest-only
+policy below describes upstream; macOS 26 still uses its modern appearance and AI APIs.
+
 The rule — latest-only, prefer modern APIs, no compatibility layers, never add backwards compatibility
 unasked — is stated in [`AGENTS.md`](../AGENTS.md#posture-latest-only-always). This section is the
 reasoning and the concrete shape it takes.
@@ -134,6 +138,9 @@ Swift 6 language mode: data-race violations are hard errors, and that is the des
   with extra steps.
 - Block observers go through the RAII `NotificationToken` (`Platform/NotificationToken.swift`), not a
   bare `addObserver` plus removal in `deinit`.
+- A child process is started with `runObservingExit()` (`Platform/ProcessExit.swift`) and awaited
+  through the `ProcessExit` it returns, never `waitUntilExit()`: that spins the calling thread's run
+  loop, which on a GCD thread can miss the exit and block forever.
 - Every escaping closure capturing `self` uses `[weak self]`, or `[unowned self]` where the closure
   cannot outlive the owner (as in `AppCore`'s coordinator wiring).
 - `DispatchQueue.main.async` is not a fix for an ordering problem. If order matters, make it explicit.
