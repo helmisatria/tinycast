@@ -6,6 +6,13 @@ and an emoji picker. It also **runs Raycast extensions** natively, in JavaScript
 SwiftUI + AppKit, running as an accessory with no Dock icon (`LSUIElement`). Zero third-party
 dependencies.
 
+## Fork compatibility
+
+This fork supports macOS 15 and newer. Keep the current upstream features, use Liquid Glass on
+macOS 26, and use material-backed controls on macOS 15. Apple Intelligence requires macOS 26;
+remote and installed AI providers remain available on macOS 15. The upstream posture below governs
+the macOS 26 path; availability checks needed for this fork's macOS 15 support are intentional.
+
 ## Posture: latest-only, always
 
 **Tinycast targets one macOS — the current stable release — and nothing else.** macOS 26+, the Xcode 26
@@ -77,8 +84,8 @@ feature's doc, under its own `## Invariants`.
 - **A networked feature fetches on a private `.ephemeral`, `urlCache = nil` session**, never
   `URLSession.shared`, so its own cache file stays the only copy on disk. `CurrencyRateStore` is the
   reference — copy it rather than inventing a second shape. A flag that grants a capability is never
-  carried by a backup: `snippetsEnabled` is excluded from settings backups so an import cannot grant
-  keystroke listening.
+  carried by a backup or by `settings.json`: `snippetsEnabled` is excluded from settings backups so an
+  import cannot grant keystroke listening.
 - **Extensions stay inside `Features/Extensions/`.** Every view, row, menu, geometry and sizing
   constant an extension needs is written and owned there — never added to `DesignSystem/`, never bolted
   onto `Theme`, and never lifted somewhere another feature can build on it. Another surface may render
@@ -105,6 +112,9 @@ feature's doc, under its own `## Invariants`.
 
 ## Conventions worth knowing up front
 
+- **A new preference also gets a `SettingsFileKey`** and its binding in `SettingsFileSchema`, so the
+  opt-in `settings.json` mirror carries it; the exhaustive switch fails the build until it is bound.
+  See [settings-file.md](docs/features/settings-file.md).
 - **A type's suffix says what it *is*** — `Store`, `Coordinator`, `Controller`, `Manager`, `Engine`,
   `Policy` and the rest each name a specific responsibility. **Semantic correctness always wins over
   suffix consistency:** pick the suffix that describes the type honestly, add a new one when none fits,

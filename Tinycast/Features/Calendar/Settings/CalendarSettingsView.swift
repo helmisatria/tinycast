@@ -15,7 +15,9 @@ struct CalendarSettingsView: View {
                     "Reads \(core.calendarCoordinator.span.possessivePhrase) events for join links. "
                     + "Nothing leaves this Mac.",
                 isEnabled: enabledBinding,
-                showsInLauncher: $settings.calendarShowInLauncher)
+                showsInLauncher: $settings.calendarShowInLauncher,
+                showsIcon: true,
+                showsHeader: false)
 
             Section {
                 Picker(selection: $settings.calendarLauncherLimit) {
@@ -110,6 +112,11 @@ struct CalendarSettingsView: View {
                 }
                 .toggleStyle(.checkbox)
                 .settingsEnabled(settings.calendarMenuBarDisplay != .disabled)
+                Toggle(isOn: $settings.calendarMenuBarHidesWhenEmpty) {
+                    SettingsRowTitle(.calendarMenuBar, "Hide when there are no upcoming events")
+                }
+                .toggleStyle(.checkbox)
+                .settingsEnabled(settings.calendarMenuBarDisplay != .disabled)
                 Picker(selection: $settings.hideCurrentEvent) {
                     ForEach(HideCurrentEvent.allCases) { hide in
                         Text(hide.title).tag(hide)
@@ -195,23 +202,14 @@ private struct CalendarPickerSection: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
             } else {
-                // One row holding a lazy stack: a `Form` realizes every row it is handed.
-                LazyVStack(spacing: 0) {
-                    ForEach(calendars) { calendar in
-                        if calendar.id != calendars.first?.id { Divider() }
-                        CalendarRow(calendar: calendar)
-                            .padding(.vertical, Self.rowPadding)
-                    }
+                ForEach(calendars) { calendar in
+                    CalendarRow(calendar: calendar)
                 }
-                .padding(.vertical, -Self.rowPadding)
             }
         } header: {
             SettingsSectionHeader(.calendarCalendars)
         }
     }
-
-    /// A grouped `Form` row's own vertical padding.
-    private static let rowPadding: CGFloat = 15
 
     private var emptyMessage: String {
         if !query.isEmpty { return "No matches for “\(query)”." }
