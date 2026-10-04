@@ -90,6 +90,7 @@ every screen but the clipboard, which lands past its pins
 | `.emoji` | `EmojiScreen` | `EmojiGridView` |
 | `.fileSearch` | `FileSearchScreen` | `FileSearchList` (see [file-search.md](file-search.md)) |
 | `.schedule` | `ScheduleScreen` | `ScheduleList` (see [calendar.md](calendar.md)) |
+| `.meetingDetails` | `MeetingDetailsScreen` | `MeetingDetailsView` (see [calendar.md](calendar.md#the-details-page)) |
 | `.uninstall` | `UninstallScreen` | `UninstallList` (see [uninstall.md](uninstall.md)) |
 | `.quicklinks` | `QuicklinkListScreen` | `QuicklinkList` + preview (see [quicklinks.md](quicklinks.md#search-quicklinks)) |
 | `.snippets` | `SnippetsScreen` | `SnippetsList` + preview (see [snippets.md](snippets.md#search-snippets)) |
@@ -473,6 +474,9 @@ caret, mouse selection and standard editing commands.
 - The caret is hidden by clearing SwiftUI's **own** live field editor's `insertionPointColor`. SwiftUI
   force-casts its field editor to a private subclass, so vending a custom one crashes. The searchable
   menu draws no caret of its own; AppKit draws the caret in its field editor.
+- SwiftUI resolves `tint` into a fixed caret colour on focus and never refreshes it, and the search
+  field keeps focus across hide and show. `PalettePanel.makeFirstResponder` re-colours the editor with
+  the dynamic `textPrimary`, so the caret follows a Light/Dark switch.
 
 ## ↵ never commits the search field
 

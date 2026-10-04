@@ -5,6 +5,7 @@ import SwiftUI
 enum Theme {
     enum Spacing {
         static let xxs: CGFloat = 2
+        static let dictationWaveGap: CGFloat = 3
         static let xs: CGFloat = 4
         static let sm: CGFloat = 6
         static let md: CGFloat = 8
@@ -117,8 +118,6 @@ enum Theme {
         /// The calendar-colour bar between a meeting row's icon and its title.
         static let calendarBarWidth: CGFloat = 3
         static let calendarBarHeight: CGFloat = 18
-        /// The same bar in the menu bar and its menu, sized to the system's 13pt menu text.
-        static let menuBarCalendarBarHeight: CGFloat = 12
         static let keyCap: CGFloat = 18
         /// Settings shortcut-recorder keycap — smaller than the palette's `keyCap` chip.
         static let recorderKeyCap: CGFloat = 16
@@ -288,6 +287,8 @@ enum Theme {
         /// Transient volume HUD shown after any volume or mute command.
         static let hudWidth: CGFloat = 200
         static let hudHeight: CGFloat = 100
+        static let dictationPanel = CGSize(width: 144, height: 44)
+        static let dictationWaveBar: CGFloat = 2
         /// Read-only volume bar geometry used by the HUD.
         static let volumeTrackHeight: CGFloat = 6
         /// Fixed slot for the level readout, sized to the widest string it ever holds.
@@ -522,7 +523,7 @@ private struct FrostedSurface<S: Shape>: ViewModifier {
         if #available(macOS 26.0, *) {
             if isInteractive {
                 content
-                    .glassEffect(.clear.interactive(), in: shape)
+                    .glassEffect(.regular.interactive(), in: shape)
             } else {
                 content.glassEffect(.regular, in: shape)
             }
@@ -556,7 +557,7 @@ extension View {
         modifier(FrostedButtonSurface())
     }
 
-    /// A floating glass control surface: clear, interactive Liquid Glass.
+    /// A floating glass control surface: regular, interactive Liquid Glass.
     func frosted(in shape: some Shape) -> some View {
         modifier(FrostedSurface(shape: shape, isInteractive: true))
     }

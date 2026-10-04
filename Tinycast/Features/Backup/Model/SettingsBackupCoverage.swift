@@ -53,7 +53,7 @@ enum SettingsBackupCoverage {
         "extensionsShowInLauncher": .extensionsShowInLauncher,
         "calendarShowInLauncher": .calendarShowInLauncher,
         "calendarLauncherLimit": .calendarLauncherLimit,
-        "calendarIncludesTomorrow": .calendarIncludesTomorrow,
+        "calendarSpan": .calendarSpan,
         "joinWindowMinutes": .joinWindowMinutes,
         "autoJoinConfirms": .autoJoinConfirms,
         "menuBarEvents": .menuBarEvents,
@@ -71,14 +71,25 @@ enum SettingsBackupCoverage {
 
     /// Keys kept out of a backup on purpose, each with the reason it has to stay out.
     static let deliberatelyExcluded: [String: String] = [
+        AppSettingsKey.dictationEnabled.rawValue:
+            "Microphone capture is an opt-in capability on this Mac; a backup must not enable it.",
+        AppSettingsKey.dictationMode.rawValue: "Dictation preferences stay local until backup supports them.",
+        AppSettingsKey.dictationModel.rawValue: "Downloaded models are local to this Mac.",
+        AppSettingsKey.dictationLanguage.rawValue:
+            "Dictation preferences stay local until backup supports them.",
+        AppSettingsKey.dictationMicrophone.rawValue: "Names a microphone attached to this Mac.",
+        AppSettingsKey.dictationDestination.rawValue:
+            "An import must not change where dictated text is sent.",
+        AppSettingsKey.dictationAdaptsCapitalization.rawValue:
+            "Dictation preferences stay local until backup supports them.",
+        AppSettingsKey.dictationIdleRelease.rawValue:
+            "Dictation memory use stays a device-local preference.",
         AppSettingsKey.clipboardTextSearchEnabled.rawValue:
             "Background OCR is an opt-in processing choice on this Mac; a backup must not enable it.",
         AppSettingsKey.snippetsEnabled.rawValue:
             "Doubles as keyword-expansion consent; an import must not enable keystroke listening.",
         AppSettingsKey.extensionPackageManager.rawValue:
             "Names a tool on this Mac; the machine a backup lands on may not have it.",
-        AppSettingsKey.extensionRegistries.rawValue:
-            "A registry is a source of executable code; adding one has to be a deliberate act.",
         AppSettingsKey.extensionCustomSearchPaths.rawValue:
             "Machine-local toolchain paths; the Mac a backup lands on may not have them, or may have "
             + "something else there.",

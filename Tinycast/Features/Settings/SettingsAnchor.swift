@@ -49,6 +49,12 @@ extension SettingsAnchor {
     static let quickActionsModel = Self(tab: .quickActions, title: "Model")
     static let quickActionsTranslate = Self(tab: .quickActions, title: "Translate")
 
+    static let dictationDictation = Self(tab: .dictation, title: "Dictation")
+    static let dictationCommands = Self(tab: .dictation, title: "Commands")
+    static let dictationModel = Self(tab: .dictation, title: "Model")
+    static let dictationMemory = Self(tab: .dictation, title: "Memory")
+    static let dictationOutput = Self(tab: .dictation, title: "Output")
+
     static let fileSearchFileSearch = Self(tab: .fileSearch, title: "File Search")
     static let fileSearchCommands = Self(tab: .fileSearch, title: "Commands")
     static let fileSearchSearchScopes = Self(tab: .fileSearch, title: "Search Scopes")
@@ -86,7 +92,6 @@ extension SettingsAnchor {
 
     static let calendarCalendar = Self(tab: .calendar, title: "Calendar")
     static let calendarCommands = Self(tab: .calendar, title: "Commands")
-    static let calendarSchedule = Self(tab: .calendar, title: "Schedule")
     static let calendarJoining = Self(tab: .calendar, title: "Joining")
     static let calendarMenuBar = Self(tab: .calendar, title: "Menu Bar")
     static let calendarCalendars = Self(tab: .calendar, title: "Calendars")
@@ -99,6 +104,7 @@ extension SettingsAnchor {
 
     static let permissionsAccessibility = Self(tab: .permissions, title: "Accessibility")
     static let permissionsCalendars = Self(tab: .permissions, title: "Calendars")
+    static let permissionsMicrophone = Self(tab: .permissions, title: "Microphone")
 
     static let backupExport = Self(tab: .backup, title: "Export")
     static let backupImport = Self(tab: .backup, title: "Import")

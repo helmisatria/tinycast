@@ -71,6 +71,17 @@ enum SettingsFileSchema {
         case .notesRendersMarkdown: return bind(settings, \.notesRendersMarkdown)
         case .notesShowsFormattingBar: return bind(settings, \.notesShowsFormattingBar)
         case .notesFolder: return bind(settings, \.notesFolder, accept: folder)
+        case .dictationMode: return bind(settings, \.dictationMode)
+        case .dictationModel: return bind(settings, \.dictationModel)
+        case .dictationMicrophone: return bind(settings, \.dictationMicrophone)
+        case .dictationDestination: return bind(settings, \.dictationDestination)
+        case .dictationAdaptsCapitalization: return bind(settings, \.dictationAdaptsCapitalization)
+        case .dictationIdleRelease: return bind(settings, \.dictationIdleRelease)
+        case .dictationLanguage:
+            return bind(settings, \.dictationLanguage) { language in
+                guard let language else { return .some(nil) }
+                return DictationLanguage(rawValue: language) == nil ? nil : .some(language)
+            }
         case .snippetsShowInLauncher: return bind(settings, \.snippetsShowInLauncher)
         case .snippetsFolder: return bind(settings, \.snippetsFolder, accept: folder)
         case .navigationEnabled: return bind(settings, \.navigationEnabled)
@@ -98,7 +109,7 @@ enum SettingsFileSchema {
         case .emojiGridColumns: return bind(settings, \.emojiGridColumns)
         case .calendarShowInLauncher: return bind(settings, \.calendarShowInLauncher)
         case .calendarLauncherLimit: return bind(settings, \.calendarLauncherLimit)
-        case .calendarIncludesTomorrow: return bind(settings, \.calendarIncludesTomorrow)
+        case .calendarSpan: return bind(settings, \.calendarSpan)
         case .joinWindowMinutes: return bind(settings, \.joinWindowMinutes)
         case .autoJoinConfirms: return bind(settings, \.autoJoinConfirms)
         case .meetingBrowser: return bind(settings, \.meetingBrowserBundleID)
@@ -131,6 +142,10 @@ extension WindowCycle: SettingsFileRawValue {}
 extension ClipboardDefaultAction: SettingsFileRawValue {}
 extension EmojiSkinTone: SettingsFileRawValue {}
 extension EmojiGridColumns: SettingsFileRawValue {}
+extension DictationModel: SettingsFileRawValue {}
+extension DictationMode: SettingsFileRawValue {}
+extension DictationDestination: SettingsFileRawValue {}
+extension DictationIdleRelease: SettingsFileRawValue {}
 extension JoinWindow: SettingsFileRawValue {}
 
 extension ClipboardRetention: SettingsFileToken {
@@ -198,6 +213,16 @@ extension CalendarLauncherLimit: SettingsFileToken {
         case .three: 3
         case .five: 5
         case .all: "all"
+        }
+    }
+}
+
+extension MeetingSpan: SettingsFileToken {
+    var settingsToken: SettingsFileJSON {
+        switch self {
+        case .today: "today"
+        case .todayAndTomorrow: "todayAndTomorrow"
+        case .nextSevenDays: "nextSevenDays"
         }
     }
 }

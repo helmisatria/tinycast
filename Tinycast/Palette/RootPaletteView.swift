@@ -88,6 +88,8 @@ struct RootPaletteView: View {
             return ScheduleScreen(
                 store: calendarStore, clock: meetingClock, core: core, vm: vm,
                 openActions: openActions)
+        case .meetingDetails:
+            return MeetingDetailsScreen(store: calendarStore, core: core)
         case .clipboard:
             return ClipboardScreen(
                 store: store, core: core, vm: vm, openActions: openActions,
@@ -419,6 +421,7 @@ struct RootPaletteView: View {
                 }
                 if vm.mode != .menuSearch { menuSearch.reset() }
                 if vm.mode != .switchWindows { windowSwitch.reset() }
+                if vm.mode != .meetingDetails { calendarStore.clearDetails() }
                 if vm.mode != .rooms, vm.mode != .roomWindows { core.roomCoordinator.screensDidClose() }
                 // Leaving the screen any other way than Escape still ends the command's session.
                 if vm.mode != .extensionCommand, extensions.running != nil, !extensions.isAuthorizing {
@@ -881,11 +884,12 @@ struct RootPaletteView: View {
         HStack(spacing: 0) {
             appMenuButton
                 .modifier(ExtensionToastSlot(extensions: extensions, showing: vm.mode == .extensionCommand))
-            Spacer()
             if showActionGroup {
                 actionGroup(
                     pillLabel: pillLabel, formPrimaryShortcut: formPrimaryShortcut,
-                    showActions: showActions)
+                    showActions: showActions
+                )
+                .fixedSize()
             }
         }
         .padding(.horizontal, metrics.spacing.md)
@@ -980,6 +984,7 @@ struct RootPaletteView: View {
         case .clipboardFilter: toggleClipboardFilter()
         case .fileSearchFilter: toggleFileSearchFilter()
         case .emojiCategory: toggleEmojiCategory()
+        case .aiModel: toggleAIModel()
         case .ignored: return false
         }
         return true

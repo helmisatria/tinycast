@@ -110,7 +110,7 @@ enum SettingsSearchCatalog {
     static let entries: [SettingsSearchEntry] =
         general + applications + systemSettings + systemActions + commands + quicklinks
         + appleShortcuts + fallbacks + clipboard + snippets + fileSearch + windowManagement
-        + navigation + notes + calendar + emoji + ai + quickActions + extensions + permissions
+        + navigation + notes + calendar + emoji + ai + quickActions + dictation + extensions + permissions
         + backup + about
 
     private static let general: [SettingsSearchEntry] = [
@@ -326,6 +326,20 @@ enum SettingsSearchCatalog {
             keywords: ["language", "locale"])
     ]
 
+    private static let dictation: [SettingsSearchEntry] = [
+        .init(pane: .dictation, keywords: ["speech", "voice", "transcription", "microphone"]),
+        .init(.dictationDictation, "Enable Dictation"),
+        .init(.dictationCommands, "Shortcut behavior"),
+        .init(.dictationCommands, "Shortcut"),
+        .init(.dictationModel, "Model"),
+        .init(.dictationModel, "Engine", keywords: ["parakeet", "redux", "ultra", "qwen"]),
+        .init(.dictationModel, "Language"),
+        .init(.dictationMemory, "Release model from memory"),
+        .init(.dictationOutput, "Microphone"),
+        .init(.dictationOutput, "When finished"),
+        .init(.dictationOutput, "Adapt capitalization", keywords: ["uppercase", "lowercase", "sentence"])
+    ]
+
     private static let fileSearch: [SettingsSearchEntry] = [
         .init(
             pane: .fileSearch,
@@ -412,6 +426,9 @@ enum SettingsSearchCatalog {
         .init(
             .windowManagementOptions, "Gap between windows",
             keywords: ["padding", "spacing", "margin", "points"]),
+        .init(
+            .windowManagementOptions, "Shortcut preset",
+            keywords: ["rectangle", "magnet", "spectacle", "defaults", "import", "shortcuts"]),
         .init(
             group: .windowManagementOptions, "Window commands",
             keywords: ["shortcut", "left half", "maximize", "center"]),
@@ -505,11 +522,8 @@ enum SettingsSearchCatalog {
             .calendarCalendar, "Join meetings from Tinycast",
             keywords: ["zoom", "meet", "teams", "permission"]),
         .init(
-            .calendarSchedule, "Upcoming meetings in launcher",
+            .calendarCalendar, "Upcoming meetings in launcher",
             keywords: ["count", "limit", "events"]),
-        .init(
-            .calendarSchedule, "Include Tomorrow's Events",
-            keywords: ["next day", "range"]),
         .init(
             .calendarJoining, "Show the join card",
             keywords: ["hud", "timing", "early", "reminder"]),
@@ -528,6 +542,9 @@ enum SettingsSearchCatalog {
         .init(
             .calendarMenuBar, "Calendar in Menu Bar",
             keywords: ["status item", "menubar", "date"]),
+        .init(
+            .calendarMenuBar, "Days to Show",
+            keywords: ["tomorrow", "week", "next 7 days", "range", "agenda", "schedule"]),
         .init(
             .calendarMenuBar, "Show Upcoming Events",
             keywords: ["menubar", "next event", "title"]),
@@ -557,10 +574,10 @@ enum SettingsSearchCatalog {
             keywords: ["raycast", "third party", "javascript"]),
         .init(
             .extensionsInstall, "Search extensions",
-            keywords: ["store", "browse", "install", "registry"]),
+            keywords: ["store", "browse", "install"]),
         .init(
-            group: .extensionsInstall, "Registries",
-            keywords: ["github", "source", "store"]),
+            .extensionsInstall, "Install from GitHub",
+            keywords: ["source", "build", "repository", "package manager", "pnpm", "npm", "yarn", "bun"]),
         .init(
             .extensionsInstall, "Import from Raycast",
             keywords: ["migrate", "existing"]),
@@ -569,7 +586,9 @@ enum SettingsSearchCatalog {
             keywords: ["local", "develop", "sideload"]),
         .init(
             group: .extensionsInstalled, "Installed extensions",
-            keywords: ["library", "uninstall", "preferences", "appearance", "alias", "shortcut"]),
+            keywords: [
+                "library", "uninstall", "update", "preferences", "appearance", "alias", "shortcut"
+            ]),
         .init(
             group: .extensionsCompatibility, "Compatibility",
             keywords: ["supported", "unsupported", "raycast api"]),
@@ -587,7 +606,10 @@ enum SettingsSearchCatalog {
             keywords: ["paste", "keystrokes", "privacy", "grant"]),
         .init(
             .permissionsCalendars, "Calendars",
-            keywords: ["events", "privacy", "grant", "eventkit"])
+            keywords: ["events", "privacy", "grant", "eventkit"]),
+        .init(
+            .permissionsMicrophone, "Microphone",
+            keywords: ["dictation", "recording", "privacy", "grant"])
     ]
 
     private static let backup: [SettingsSearchEntry] = [

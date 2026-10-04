@@ -272,18 +272,19 @@ private struct SettingsEditorPanelSurface: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: Theme.Radius.panel, style: .continuous)
+        let draggable = content.background(WindowDragBackground())
         if #available(macOS 26.0, *) {
             if controlsOnGlass {
-                content
+                draggable
                     .background(Theme.Colors.panelScrim, in: shape)
                     .glassEffect(.regular, in: shape)
             } else {
-                content.background {
+                draggable.background {
                     shape.fill(Theme.Colors.panelScrim).glassEffect(.regular, in: shape)
                 }
             }
         } else {
-            content
+            draggable
                 .background(Theme.Colors.panelScrim, in: shape)
                 .frostedMenu(in: shape)
         }

@@ -111,6 +111,7 @@ Where a number has a special case, the case is a word:
 | `ai.toolRounds` | 10, 25, 50, 100, `"unlimited"` |
 | `ai.opensTo` | `"recent"`, `"newConversation"` |
 | `calendar.launcherLimit` | 1, 3, 5, `"all"` |
+| `calendar.span` | `"today"`, `"todayAndTomorrow"`, `"nextSevenDays"` |
 | `calendar.menuBar` | `"disabled"`, `"meetingIcon"`, `"meetingTitle"` |
 | `calendar.menuBarUpcomingEvents` | `"today"`, or 2, 5, 10, 30 minutes before |
 | `calendar.hideCurrentEventAfterMinutes` | `"never"`, 0 (as it starts), 5, 10, 30 |
@@ -124,7 +125,8 @@ Where a number has a special case, the case is a word:
 shows ✦. The key is the lowercase character this Mac's keyboard types, or a name: `space`, `return`,
 `enter`, `tab`, `delete`, `forward-delete`, `escape`, `left`, `right`, `up`, `down`, `home`, `end`,
 `page-up`, `page-down`, `help`, `f1`–`f20`, `keypad-0`…; any other key is `key-<code>`. `cmd++` is the
-plus key. Keyless bindings are `double-tap ctrl|option|shift|cmd`, `globe` and `double-tap globe`. The
+plus key. Keyless bindings are `left|right ctrl|option|shift|cmd`, their `double-tap` forms,
+`double-tap ctrl|option|shift|cmd`, `globe` and `double-tap globe`. The
 recorder's rule holds: a chord needs ⌘, ⌥, ⌃ or fn unless its key is an F-key.
 
 ## Window management
