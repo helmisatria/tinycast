@@ -679,6 +679,8 @@ process command line. Claude uses stream JSON, `--effort` and no session persist
 turn as one framed `stream-json` user line. With servers armed it keeps stdin open for the consent
 channel and closes it on the CLI's own result frame; writes are chained rather than concurrent,
 because two racing the same pipe would interleave a line.
+Consent tasks are also chained, so concurrent tool requests are asked about in arrival order and
+a cancelled turn never opens its queued prompts.
 Grok uses `streaming-messages-json` and `--effort`, with `--deny *` so tools cannot run even when the
 user's Grok config is always-approve; it captures the session id, then calls `grok sessions delete`.
 An error result omits `result` and carries the cause in `errors`; that text is the failure, not

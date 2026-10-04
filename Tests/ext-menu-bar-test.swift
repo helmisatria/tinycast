@@ -584,7 +584,7 @@ extension ExtensionTests {
         }
         check("install does not run a menu command", boots.isEmpty && metadata.menuBarCommands().isEmpty)
         manager.run(first, command: first.manifest.commands[0])
-        await settle(400)
+        await settleUntil { !manager.isRunning && lastRuntime == nil }
         check("settled menu keeps only a snapshot", !manager.isRunning && lastRuntime == nil)
         check("manual launch snapshots title", snapshot(firstRef)?.title == "userInitiated")
         check(
