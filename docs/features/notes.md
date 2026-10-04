@@ -307,6 +307,9 @@ the debounce fires. Open Notes Folder (⌘O) invites exactly that, and this is t
 feature whose whole job is one local editor. Every other external change is picked up, because showing
 the window re-lists the folder before it presents anything.
 
+Undo notifications use typed Foundation observations on macOS 26 and selector observations on
+macOS 15. Both publish the restored source and character count synchronously after Undo or Redo.
+
 ## Verification
 
 `Tests/notes-test.swift` compiles the shipped Notes model and service sources with the real fuzzy

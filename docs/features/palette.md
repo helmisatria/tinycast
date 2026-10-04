@@ -27,7 +27,11 @@ The command palette is a borderless floating `NSPanel` hosting SwiftUI; see
   the panel becomes key, the configured source is applied through `PalettePanel.fieldEditorContext`, and
   the captured source is restored on hide and on termination — but only when the palette is still on the
   source it applied, so a switch made since, by the user or another app, stands. Never applied globally:
-  the panel does not activate, so a global switch would land on whichever app is still frontmost.
+  the switch stays scoped to the field editor rather than changing the previous app's input source.
+
+On macOS 15, summoning explicitly activates Tinycast before making the palette key, so its keyboard
+focus does not depend on the non-activating panel handoff. macOS 26 keeps the non-activating path.
+The previous app and input source are captured before activation and restored when the palette hides.
 
 ## Summoning
 

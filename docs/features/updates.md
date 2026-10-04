@@ -4,6 +4,25 @@ By default, Tinycast checks GitHub Releases once a day and offers the newest rel
 channel in a native window with its release notes, installs it and relaunches. There is no Sparkle and
 no appcast: the release feed the website already reads is the feed the app reads.
 
+## This fork
+
+Releases come from `helmisatria/tinycast`, not the upstream repository. They retain the macOS 15
+floor and this Mac's existing Apple Development signing certificate. The first installation uses
+`Scripts/build-local.sh Release --install`; later releases use the existing **Update Now** and
+**Relaunch** buttons. No signature checks are bypassed.
+
+The fork has its own increasing release versions, starting at 0.11.13. A release can include commits
+newer than the latest upstream stable tag. Its notes identify the exact fork commit.
+
+`fork-sync.yml` checks upstream daily at 05:00 Asia/Jakarta. A clean merge starts `fork-release.yml`,
+which runs the harnesses and lint, compiles for macOS 15, verifies the signature and all embedded
+binaries, and publishes a ZIP. A merge conflict or failed check needs maintenance before a new
+release can be offered. The release workflow also runs when this fork's main branch is pushed.
+
+The updater uses `update-check-fork.json`, so old cached upstream downloads are never offered.
+The Developer ID trust requirement belongs to Helmi's team; the unchanged certificate-match path
+accepts releases signed with the installed app's Apple Development identity.
+
 ## Invariants
 
 - **Tinycast installs its own updates, and Homebrew stays out of the way.** Both casks declare
@@ -90,7 +109,7 @@ identity changes.
 self-rescheduling pump, and one atomic JSON file.
 
 ```text
-~/Library/Caches/<bundle-id>/update-check.json
+~/Library/Caches/<bundle-id>/update-check-fork.json
 ```
 
 It holds `lastCheckedAt`, the newest release seen, and the version the user dismissed. Freshness is

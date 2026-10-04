@@ -53,7 +53,7 @@ struct NoteEditorView: NSViewRepresentable {
 
         private var input: NoteEditorInput
         private var isInstalling = false
-        private var undoObservers: [NotificationCenter.ObservationToken] = []
+        private var undoObservation: AnyObject?
         /// Held here because the layout manager keeps its delegate weakly.
         private let fragmentProvider = NoteLayoutFragmentProvider()
 
@@ -63,18 +63,38 @@ struct NoteEditorView: NSViewRepresentable {
             renderer = NoteMarkdownRenderer(isEnabled: parent.rendersMarkdown)
             super.init()
             let center = NotificationCenter.default
-            undoObservers = [
-                center.addObserver(of: editorUndoManager, for: .didUndoChange) { [weak self] _ in
-                    self?.sourceDidChange()
-                },
-                center.addObserver(of: editorUndoManager, for: .didRedoChange) { [weak self] _ in
+            if #available(macOS 26, *) {
+                undoObservation = UndoObservation(manager: editorUndoManager) { [weak self] in
                     self?.sourceDidChange()
                 }
-            ]
+            } else {
+                for name in [Notification.Name.NSUndoManagerDidUndoChange, .NSUndoManagerDidRedoChange] {
+                    center.addObserver(
+                        self, selector: #selector(undoDidChange), name: name, object: editorUndoManager)
+                }
+            }
         }
 
-        deinit {
-            for observer in undoObservers { NotificationCenter.default.removeObserver(observer) }
+        @objc private func undoDidChange(_ notification: Notification) {
+            sourceDidChange()
+        }
+
+        @available(macOS 26, *)
+        @MainActor
+        private final class UndoObservation {
+            private let observers: [NotificationCenter.ObservationToken]
+
+            init(manager: UndoManager, onChange: @escaping @MainActor () -> Void) {
+                let center = NotificationCenter.default
+                observers = [
+                    center.addObserver(of: manager, for: .didUndoChange) { _ in onChange() },
+                    center.addObserver(of: manager, for: .didRedoChange) { _ in onChange() }
+                ]
+            }
+
+            deinit {
+                for observer in observers { NotificationCenter.default.removeObserver(observer) }
+            }
         }
 
         private func attach() {

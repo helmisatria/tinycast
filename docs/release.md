@@ -3,6 +3,23 @@
 How a build reaches a user. The local development loop is in [development.md](development.md);
 the signing identity itself is in [signing.md](signing.md).
 
+## Fork releases
+
+`helmisatria/tinycast` uses `.github/workflows/fork-release.yml`. Push the tested fork to `main`,
+or run **Fork Release** in GitHub Actions. It assigns the next stable fork version and publishes
+an arm64 ZIP for the in-app updater after tests, lint, macOS 15 compilation and signature checks.
+`fork-sync.yml` attempts an upstream merge daily and dispatches the release workflow after a clean
+merge. A failed merge or validation publishes nothing.
+
+`FORK_SIGNING_P12_BASE64` and `FORK_SIGNING_P12_PASSWORD` contain only this app's existing local
+Apple Development identity and its export password. `FORK_SIGNING_IDENTITY` and
+`FORK_DEVELOPMENT_TEAM` identify that certificate and team. GitHub stores the secrets; the runner
+imports them into a temporary keychain and removes it after the build. Keep the certificate stable
+so updates continue to satisfy the installed app's signing requirement.
+
+The upstream workflow and Homebrew/website/Discord steps below describe upstream releases.
+The fork workflow publishes only to `helmisatria/tinycast` and sends no announcements.
+
 ## Packaging a DMG locally
 
 ```sh
@@ -10,13 +27,16 @@ the signing identity itself is in [signing.md](signing.md).
 ./Scripts/build-dmg.sh 0.5.7      # -> build/Tinycast-0.5.7.dmg
 ```
 
-It builds a Release `Tinycast.app` signed with `Tinycast Self-Signed` and packs it with an
-`/Applications` symlink. Official per-channel releases are built by CI, below.
+It builds and verifies a Release `Tinycast.app` using `Config/Signing.xcconfig` and the optional local
+override, then packs it with an `/Applications` symlink. Use `./Scripts/build-local.sh Release --install`
+to replace the local app while checking that its signing identity still matches. Official per-channel
+releases are built by CI, below.
 
 ## Signing & Gatekeeper
 
-Both local builds and CI releases sign with the same stable `Tinycast Self-Signed` identity, not an
-Apple Developer ID — so macOS quarantines a directly-downloaded DMG. The Homebrew cask strips that
+CI releases use the stable `Tinycast Self-Signed` identity; local builds can preserve an existing
+Apple Development identity through `LocalSigning.xcconfig`. Neither is a Developer ID distribution
+signature, so macOS quarantines a directly-downloaded DMG. The Homebrew cask strips that
 automatically; direct downloaders run `xattr -dr com.apple.quarantine "…/Tinycast.app"` once. Full
 details in [signing.md](signing.md).
 

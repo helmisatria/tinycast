@@ -14,9 +14,10 @@ verifying a change is [testing.md](testing.md).
 
 ## First-time setup
 
-Create the `Tinycast Self-Signed` code-signing identity once — builds sign with it, which is what keeps
-macOS from forgetting the Accessibility grant on every rebuild. Follow **[signing.md](signing.md) §1**,
-a few `openssl`/`security` commands.
+Keep one code-signing identity across local builds so Accessibility survives rebuilds. On this fork,
+follow [the local signing setup](signing.md#local-builds-on-this-fork) before creating a certificate.
+This Mac's existing Apple Development identity is pinned in the ignored `LocalSigning.xcconfig`;
+other machines can use the upstream `Tinycast Self-Signed` setup if they have no identity to preserve.
 
 That is the whole required setup. Editor configuration is personal and the repo does not prescribe it;
 the section below is a note for anyone who wants it, not a step.
@@ -30,7 +31,8 @@ open Tinycast.xcodeproj    # then ⌘R
 Or from the command line:
 
 ```sh
-xcodebuild -project Tinycast.xcodeproj -scheme Tinycast -configuration Debug build
+./Scripts/build-local.sh Debug
+./Scripts/build-local.sh Release --install    # rebuild the installed Tinycast with the same signer
 ```
 
 `xcodebuild` uses whatever `xcode-select` points at; if that's the Command Line Tools rather than
@@ -68,8 +70,8 @@ reclaims it under disk pressure without saying so.
 Consequences worth knowing:
 
 - The dev build asks for Accessibility on its own the first time, and starts with **no** hotkeys bound
-  and onboarding unseen. Grant and bind once; it persists across rebuilds, because the fixed build path
-  and the `Tinycast Self-Signed` identity keep the TCC grant alive.
+  and onboarding unseen. Grant and bind once; the fixed build path and stable signing identity keep
+  the TCC grant alive across rebuilds. Never launch unsigned compile-check outputs.
 - Don't bind the same global hotkey in both — whichever registered first wins.
 - The Hyper Key's Caps Lock remap is `hidutil` state, which is **system-wide, not per-bundle**: quitting
   one build clears the remap for the other, which then needs a rebind or a relaunch to restore it.

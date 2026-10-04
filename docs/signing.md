@@ -1,8 +1,11 @@
 # Signing
 
-Tinycast is signed with a **stable self-signed identity** called `Tinycast Self-Signed`. Keeping the
+Tinycast's upstream builds use a **stable self-signed identity** called `Tinycast Self-Signed`. Keeping the
 _same_ identity on every build is what makes macOS remember the Accessibility permission across
 rebuilds and updates — ad-hoc signing changes every build and macOS forgets the grant.
+
+This fork also supports an existing Apple Development identity for local builds; see
+[the local setup](#local-builds-on-this-fork).
 
 An Apple Developer ID certificate now exists, but nothing is signed with it yet. Why that switch is
 staged rather than immediate is [below](#the-developer-id-migration).
@@ -13,6 +16,9 @@ You create this identity **once**. The same identity is used for:
 - **CI releases** — exported into two GitHub secrets the release workflow imports.
 
 ## 1. Create the `Tinycast Self-Signed` identity (once)
+
+For this fork's local builds, check the [local signing setup](#local-builds-on-this-fork) first.
+Keep an existing Apple Development identity when it already signs the installed app.
 
 Run these in a terminal. They generate a self-signed code-signing certificate and import it into your
 login keychain:
@@ -44,6 +50,57 @@ security find-identity -p codesigning | grep "Tinycast Self-Signed"
 ```
 
 Now local builds (Xcode, VS Code F5, `xcodebuild`) sign with it, and you grant Accessibility once.
+
+## Local builds on this fork
+
+Accessibility grants track the app's bundle ID and signing requirement. An ad-hoc build's requirement
+contains its binary hash (`cdhash`), which changes on rebuild. System Settings may still show an
+enabled entry for the previous binary while the running app reports that it is untrusted.
+
+`Config/Signing.xcconfig` keeps the upstream self-signed default and optionally reads the git-ignored
+`LocalSigning.xcconfig` at the repository root. Xcode and command-line builds both use it. This Mac
+uses its existing Apple Development certificate, matching `/Applications/Tinycast.app`.
+
+Before configuring another checkout, inspect the installed app and available identities:
+
+```sh
+codesign -d -r- /Applications/Tinycast.app
+security find-identity -v -p codesigning
+```
+
+Copy `LocalSigning.xcconfig` from the original checkout into any new worktree on this Mac. For a new
+machine, select the existing signing certificate's SHA-1 fingerprint and team ID, then write:
+
+```xcconfig
+CODE_SIGN_IDENTITY = <existing certificate SHA-1 fingerprint>
+DEVELOPMENT_TEAM = <existing certificate team ID>
+```
+
+Do not regenerate a certificate or switch identities on every build. The upstream self-signed setup
+is for a machine that has no existing identity to preserve. Never commit private keys or certificates.
+
+Use these commands for apps you intend to run:
+
+```sh
+./Scripts/build-local.sh Debug
+./Scripts/build-local.sh Release --install
+```
+
+Both build in `build/DerivedData`, require signing, and reject ad-hoc identities on the app and OCR
+helper. Release builds also verify their runtime flags and resource entitlements. `--install` verifies
+the new copy against the installed copy's signing requirement before quitting, replacing and launching
+it under `/Applications`. It stops if the identity changed. Set `TINYCAST_BUILD_VERSION` when updating
+to a new release; otherwise it preserves the installed version string.
+Debug remains `Tinycast Dev` / `com.tinycast.app.dev`; Release remains `Tinycast` / `com.tinycast.app`.
+
+Unsigned compile checks are allowed only in a separate directory such as `build/CompileOnlyDerivedData`.
+Never run or install those outputs. VS Code's build task uses the signed local build script.
+
+If a permission entry already refers to an older signing identity, quit the affected app, remove that
+entry from System Settings → Privacy & Security → Accessibility, add the signed app again and enable
+it, then relaunch. That is a one-time repair after an identity change, not a rebuild step. Do not reset
+TCC or remove permission entries during routine builds. Keeping the signer stable cannot preserve a
+grant if another installer replaces the app with a differently signed release.
 
 ## 2. Generate the CI secrets
 

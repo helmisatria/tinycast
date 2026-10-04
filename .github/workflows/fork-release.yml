@@ -1,0 +1,107 @@
+name: Fork Release
+run-name: "Signed macOS 15 release #${{ github.run_number }}"
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'helmisatria/tinycast'
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select Xcode
+        run: |
+          XCODE_PATH="$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' | sort -V | tail -n1)"
+          echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> "$GITHUB_ENV"
+
+      - name: Verify sources
+        run: |
+          brew install swiftlint
+          ./Scripts/run-tests.sh
+          ./Scripts/lint.sh
+          if rg -l 'import AppKit|import SwiftUI|import Cocoa' Tinycast/Features/*/Model/; then
+            exit 1
+          fi
+
+      - name: Choose the next fork version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
+          VERSION="$(python3 - "$RUNNER_TEMP/releases.json" <<'PY'
+          import json, re, sys
+          releases = json.load(open(sys.argv[1]))
+          versions = [tuple(map(int, match.groups())) for release in releases
+                      if not release['draft'] and not release['prerelease']
+                      and (match := re.fullmatch(r'v(\d+)\.(\d+)\.(\d+)', release['tag_name']))]
+          major, minor, patch = max(versions, default=(0, 11, 12))
+          print(f'{major}.{minor}.{patch + 1}')
+          PY
+          )"
+          echo "FORK_VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Import the existing local signing identity
+        env:
+          P12_BASE64: ${{ secrets.FORK_SIGNING_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.FORK_SIGNING_P12_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/fork-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          printf '%s' "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/fork-signing.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security import "$RUNNER_TEMP/fork-signing.p12" -k "$KEYCHAIN" \
+            -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN"
+          rm "$RUNNER_TEMP/fork-signing.p12"
+
+      - name: Build and verify the signed Release app
+        env:
+          SIGNING_IDENTITY: ${{ vars.FORK_SIGNING_IDENTITY }}
+          TEAM: ${{ vars.FORK_DEVELOPMENT_TEAM }}
+        run: |
+          xcodebuild -project Tinycast.xcodeproj -scheme Tinycast -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO MACOSX_DEPLOYMENT_TARGET=15.0 \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" DEVELOPMENT_TEAM="$TEAM" \
+            MARKETING_VERSION="$FORK_VERSION" CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" build
+          APP="$RUNNER_TEMP/DerivedData/Build/Products/Release/Tinycast.app"
+          ./Scripts/verify-signature.sh "$APP"
+          for BIN in "$APP/Contents/MacOS/Tinycast" "$APP/Contents/Helpers/ClipboardTextHelper" \
+            "$APP/Contents/Helpers/Tinycast Dictation.app/Contents/MacOS/Tinycast Dictation"; do
+            test "$(lipo -archs "$BIN")" = arm64
+            test "$(xcrun vtool -show-build-version "$BIN" | awk '/minos/{print $2}')" = 15.0
+          done
+
+      - name: Package and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APP="$RUNNER_TEMP/DerivedData/Build/Products/Release/Tinycast.app"
+          ZIP="$RUNNER_TEMP/Tinycast-$FORK_VERSION.zip"
+          ditto -c -k --keepParent --sequesterRsrc "$APP" "$ZIP"
+          printf 'Signed macOS 15 compatible build of the Tinycast fork.\n\nBuilt from commit %s.\n' \
+            "$GITHUB_SHA" > "$RUNNER_TEMP/notes.md"
+          gh release create "v$FORK_VERSION" "$ZIP" --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "Tinycast $FORK_VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" --latest
+
+      - name: Remove the temporary signing keychain
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/fork-signing.p12"
+          security delete-keychain "$RUNNER_TEMP/fork-signing.keychain-db" || true

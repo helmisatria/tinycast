@@ -3,6 +3,7 @@
 set -uo pipefail
 
 APP="${1:?usage: verify-signature.sh <path-to-.app>}"
+"$(dirname "$0")/verify-local-signature.sh" "$APP" || exit 1
 NAME="$(basename "$APP" .app)"
 STATUS=0
 

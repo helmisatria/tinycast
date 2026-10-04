@@ -1,0 +1,6 @@
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = Tinycast Self-Signed
+DEVELOPMENT_TEAM =
+
+// Keep machine-specific signing out of the repository and stable across rebuilds.
+#include? "../LocalSigning.xcconfig"

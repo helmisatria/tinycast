@@ -12,7 +12,7 @@ The mechanical bar, in one place so it cannot drift. All five pass before a chan
 | The harnesses | `./Scripts/run-tests.sh` |
 | Lint | `./Scripts/lint.sh` |
 | Pure-layer purity | `grep -rln 'import AppKit\|import SwiftUI\|import Cocoa' Tinycast/Features/*/Model/` |
-| A clean build | `xcodebuild … -configuration Debug CODE_SIGNING_ALLOWED=NO`, zero **new** warnings |
+| A clean build | `./Scripts/build-local.sh Debug`, zero **new** warnings |
 | Docs still true | any doc your change made wrong, fixed in the same commit |
 
 There is no CI: every item is on you, run locally. CodeRabbit reviews each PR, but it is a reviewer,
@@ -187,13 +187,13 @@ A clean build is part of the bar; nothing builds the app for you, so this is on 
 
 ```sh
 xcodegen generate                 # only after editing project.yml
-xcodebuild build -project Tinycast.xcodeproj -scheme Tinycast -configuration Debug \
-  CODE_SIGNING_ALLOWED=NO
-xcodebuild build -project Tinycast.xcodeproj -scheme Tinycast -configuration Release \
-  CODE_SIGNING_ALLOWED=NO
-find ~/Library/Developer/Xcode/DerivedData -name "Tinycast*.app" -maxdepth 6 -print -quit
+./Scripts/build-local.sh Debug
+./Scripts/build-local.sh Release
 ```
 
+- For an unsigned compile-only check, pass `CODE_SIGNING_ALLOWED=NO` and
+  `-derivedDataPath build/CompileOnlyDerivedData` to `xcodebuild`. Never launch or install its output;
+  it must not overwrite a signed build that owns an Accessibility grant.
 - Zero **new** warnings. Pre-existing ones are not your problem; new ones are.
 - No `@unchecked Sendable`, `nonisolated(unsafe)` or `assumeIsolated` added without a stated reason.
 - The type-checker did not time out. `LauncherList.rows` already carries an explicit annotation for
