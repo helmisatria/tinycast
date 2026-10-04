@@ -161,6 +161,10 @@ A harness that passed before a change passes after it. There is no "I'll fix it 
 commenting out a case. If a change genuinely invalidates an assertion, the assertion is rewritten in the
 same commit with the reason in the message.
 
+Menu-bar lifecycle tests wait up to two seconds for published state before asserting completion.
+Short sleeps remain only where a test needs an action to stay in progress. Unexpected command
+timeouts still fail the harness, so a busy runner cannot turn a failed action into a passing test.
+
 ### Purity checks
 
 The layering rule reduces to one grep, and it must return nothing:

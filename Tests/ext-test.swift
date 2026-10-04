@@ -171,6 +171,15 @@ struct ExtensionTests {
         try? await Task.sleep(nanoseconds: milliseconds * 1_000_000)
     }
 
+    @MainActor
+    static func settleUntil(_ condition: () -> Bool) async {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while !condition(), clock.now < deadline {
+            await settle(20)
+        }
+    }
+
     // MARK: - Results
 
     nonisolated(unsafe) static var failures = 0
