@@ -17,11 +17,18 @@ extension View {
 }
 
 private struct ExtensionSettingsEditorPanelSurface: ViewModifier {
+    @ViewBuilder
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: Theme.Radius.panel, style: .continuous)
-        content
-            .background(Theme.Colors.panelScrim, in: shape)
-            .glassEffect(.regular, in: shape)
+        if #available(macOS 26.0, *) {
+            content
+                .background(Theme.Colors.panelScrim, in: shape)
+                .glassEffect(.regular, in: shape)
+        } else {
+            content
+                .background(Theme.Colors.panelScrim, in: shape)
+                .background(.ultraThinMaterial, in: shape)
+        }
     }
 }
 
