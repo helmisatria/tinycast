@@ -38,7 +38,6 @@ struct ExtensionFormView: View {
                         .onRightClick { palette.dismissControlList() }
                 }
                 .hideNativeScrollers()
-                .scrollOriginAnchor()
             }
             .edgeDissolve()
             .thinScrollbar()

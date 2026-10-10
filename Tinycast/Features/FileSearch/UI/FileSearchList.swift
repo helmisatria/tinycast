@@ -36,7 +36,6 @@ struct FileSearchList: View {
                 .padding(.top, metrics.spacing.xs)
                 .padding(.bottom, metrics.spacing.md)
                 .hideNativeScrollers()
-                .scrollOriginAnchor()
             }
             .edgeDissolve()
             .thinScrollbar()

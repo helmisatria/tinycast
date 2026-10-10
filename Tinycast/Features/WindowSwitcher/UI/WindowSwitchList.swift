@@ -26,7 +26,6 @@ struct WindowSwitchList: View {
                 .padding(.horizontal, metrics.spacing.md)
                 .padding(.vertical, metrics.spacing.md)
                 .hideNativeScrollers()
-                .scrollOriginAnchor()
             }
             .edgeDissolve()
             .thinScrollbar()

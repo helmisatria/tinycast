@@ -210,6 +210,9 @@ run palette-placement-test Tinycast/Platform/Appearance.swift \
                            Tinycast/Features/Settings/InterfaceSize.swift \
                            Tinycast/Palette/PalettePlacement.swift
 run scroll-reveal-test     Tinycast/DesignSystem/Scrolling/SelectionReveal.swift
+run scroll-position-test   Tinycast/DesignSystem/Scrolling/ScrollIntent.swift \
+                           Tinycast/DesignSystem/Scrolling/SelectionReveal.swift \
+                           Tinycast/DesignSystem/Scrolling/SelectionFollowing.swift
 run redaction-test         Tinycast/DesignSystem/RedactedPlaceholder.swift
 run keyboard-focus-test    Tinycast/DesignSystem/Interaction/KeyboardFocus.swift
 run ai-instructions-test   Tinycast/Features/AI/Model/AIInstructions.swift \

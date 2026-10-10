@@ -102,6 +102,7 @@ If a change touches anything in the right column, the harness on the left is man
 | `palette-selection-test` | `Features/PaletteRowIndex.swift` |
 | `interface-size-test` | `DesignSystem/InterfaceMetrics.swift`, `Features/Settings/InterfaceSize.swift`, `Extensions/Model/ExtensionFormMetrics.swift` |
 | `palette-placement-test` | `DesignSystem/Theme.swift`, `Palette/PalettePlacement.swift` |
+| `scroll-position-test` | Native scroll geometry with floating bars: initial/reset origin, keyboard reveal, centered landings and manual scrolling |
 | `hotkey-test` | `HotKeys/Model/DoubleTapModifier.swift`, `DoubleTapDetector.swift`, `ModifierKey.swift`, `ModifierKeyDetector.swift`, `HotKeyBinding.swift`, `HotKeySpelling.swift`, `HyperKey.swift`, `HotKeyAction.swift`, `Service/KeyShortcut.swift`, and the command→action mapping in `Launcher/Model/CommandID.swift` |
 | `dictation-test` | `Dictation/Model/DictationModel.swift`, `DictationTextFormatter.swift` — model paths and text formatting |
 | `dictation-volume-test` | Volume recovery across fade steps, user changes, output switching, failed writes and cancellation; injected audio controls only |

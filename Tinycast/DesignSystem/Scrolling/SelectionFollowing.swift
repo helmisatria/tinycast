@@ -38,6 +38,7 @@ private struct SelectionFollowing: ViewModifier {
 
     @State private var band = Band(insetTop: 0, height: 0)
     @State private var selection: CGRect?
+    @State private var position = ScrollPosition(idType: String.self)
     /// Where the selection is still owed a place; nil once it has one, and the pointer owns it.
     @State private var target: Target?
 
@@ -56,6 +57,7 @@ private struct SelectionFollowing: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .scrollPosition($position)
             .onScrollGeometryChange(for: Band.self) {
                 Band(insetTop: $0.contentInsets.top, height: $0.containerSize.height)
             } action: { old, new in
@@ -77,7 +79,7 @@ private struct SelectionFollowing: ViewModifier {
         switch kind {
         case .top:
             target = nil
-            proxy.scrollToOrigin()
+            position.scrollTo(edge: .top)
         case .follow:
             target = .band
             align()
@@ -92,7 +94,7 @@ private struct SelectionFollowing: ViewModifier {
         // Origin, not the row's top, so the first row's section header stays on screen.
         if atOrigin {
             self.target = nil
-            return proxy.scrollToOrigin()
+            return position.scrollTo(edge: .top)
         }
         // The lazy stack dropped the selected row: bring it back by id, then re-check its frame.
         guard let selection else {
