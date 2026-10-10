@@ -104,6 +104,9 @@ Image capture (TIFF→PNG re-encode + blob write) runs off the main actor via de
 inserts, original-text search, and pruning stay on the main actor.
 Image copy uses Foundation’s `mappedIfSafe` hint before publishing the original PNG and marker.
 
+Clipboard rows use `EntryIconView` for text tiles and image/file placeholders. Warm tiles paint on
+the first frame; a cache miss renders off-main so row symbol drawing does not block opening history.
+
 **A backup reads the whole table, not `items`.** `forEachStoredItem(inDatabaseAt:)` is `nonisolated`
 and opens a second connection, because the resident window stops at 1000 rows while the table is
 capped only by age — an export that read `items` would silently drop the rest of someone's history,

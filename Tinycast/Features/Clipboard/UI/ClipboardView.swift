@@ -191,7 +191,7 @@ private struct ClipboardRow: View {
                 ColorSwatch(color: color)
                     .frame(width: artworkSize, height: artworkSize)
             } else {
-                Image(nsImage: IconCache.symbolIcon(named: "doc.text")).resizable()
+                EntryIconView(source: .symbol("doc.text"))
             }
         case .image:
             AsyncThumbnail(url: imageURL, maxPixel: 64) { image in
@@ -202,7 +202,7 @@ private struct ClipboardRow: View {
                     .clipShape(
                         RoundedRectangle(cornerRadius: metrics.radius.thumbnail, style: .continuous))
             } placeholder: {
-                Image(nsImage: IconCache.symbolIcon(named: "photo")).resizable()
+                EntryIconView(source: .symbol("photo"))
             }
         case .file:
             AsyncThumbnail(url: fileURL, maxPixel: 64, source: .file) { image in
@@ -213,7 +213,7 @@ private struct ClipboardRow: View {
                     .clipShape(
                         RoundedRectangle(cornerRadius: metrics.radius.thumbnail, style: .continuous))
             } placeholder: {
-                Image(nsImage: IconCache.symbolIcon(named: fileKind.systemImage)).resizable()
+                EntryIconView(source: .symbol(fileKind.systemImage))
             }
         }
     }
