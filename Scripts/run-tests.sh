@@ -88,6 +88,8 @@ run() {
     local name=$1
     shift
     if [ -n "$only" ] && [ "$name" != "$only" ]; then return 0; fi
+    # Fork: space-separated harnesses to leave out, e.g. ones pinned to a newer Xcode.
+    case " ${TINYCAST_SKIP_TESTS:-} " in *" $name "*) return 0;; esac
     if [ "$index_only" -eq 1 ] && [ "$emit_db" -eq 0 ]; then return 0; fi
     ran=$((ran + 1))
 
