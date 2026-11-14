@@ -9,9 +9,13 @@ final class ExtensionStorage {
         var preferences: [String: StoredValue] = [:]
         /// A search-bar dropdown's `storeValue` pick — host UI state, so not `LocalStorage`.
         var accessoryValues: [String: String] = [:]
+        /// Each command's `storeValue` form fields, as the JSON the runtime wrote.
+        var formValues: [String: [String: String]] = [:]
+        /// Each OAuth provider's token set, as the JSON the runtime wrote.
+        var oauthTokens: [String: String] = [:]
 
         enum CodingKeys: String, CodingKey {
-            case localStorage, caches, preferences, accessoryValues
+            case localStorage, caches, preferences, accessoryValues, formValues, oauthTokens
         }
 
         init() {}
@@ -28,6 +32,10 @@ final class ExtensionStorage {
                 try store.decodeIfPresent([String: StoredValue].self, forKey: .preferences) ?? [:]
             accessoryValues =
                 try store.decodeIfPresent([String: String].self, forKey: .accessoryValues) ?? [:]
+            formValues =
+                try store.decodeIfPresent([String: [String: String]].self, forKey: .formValues) ?? [:]
+            oauthTokens =
+                try store.decodeIfPresent([String: String].self, forKey: .oauthTokens) ?? [:]
         }
     }
 
@@ -115,6 +123,16 @@ final class ExtensionStorage {
         mutate(name) { $0.accessoryValues[key] = value }
     }
 
+    // MARK: - Form fields
+
+    func formValues(extension name: String, command: String) -> [String: String] {
+        store(for: name).formValues[command] ?? [:]
+    }
+
+    func setFormValues(extension name: String, command: String, values: [String: String]) {
+        mutate(name) { $0.formValues[command, default: [:]].merge(values) { $1 } }
+    }
+
     // MARK: - Cache
 
     func caches(extension name: String) -> [String: [String: String]] {
@@ -136,6 +154,17 @@ final class ExtensionStorage {
 
     func clearCache(extension name: String, namespace: String) {
         mutate(name) { $0.caches[namespace] = [:] }
+    }
+
+    // MARK: - OAuth tokens
+
+    func oauthTokens(extension name: String, provider: String) -> String? {
+        store(for: name).oauthTokens[provider]
+    }
+
+    /// `nil` signs the provider out.
+    func setOAuthTokens(extension name: String, provider: String, tokens: String?) {
+        mutate(name) { $0.oauthTokens[provider] = tokens }
     }
 
     // MARK: - Preferences

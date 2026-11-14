@@ -6,9 +6,57 @@ enum AIRequestBody {
         _ input: AIRequest, configuration: AIHTTPConfiguration
     ) -> [String: Any] {
         switch configuration.shape {
+        case .openAIResponses: return responses(input, configuration: configuration)
         case .openAICompatible: return openAI(input, configuration: configuration)
         case .anthropic: return anthropic(input, configuration: configuration)
         }
+    }
+
+    private static func responses(
+        _ input: AIRequest, configuration: AIHTTPConfiguration
+    ) -> [String: Any] {
+        var body: [String: Any] = [
+            "model": configuration.model,
+            "input": input.messages.flatMap(responseMessages),
+            "stream": true,
+            "store": false
+        ]
+        if let instructions = input.instructions?.nonEmpty { body["instructions"] = instructions }
+        if let effort = configuration.requestedEffort { body["reasoning"] = ["effort": effort] }
+        var tools: [[String: Any]] = input.tools.map {
+            [
+                "type": "function", "name": $0.name, "description": $0.description,
+                "parameters": $0.parameters.jsonObject, "strict": false
+            ]
+        }
+        if input.webSearch { tools.append(["type": "web_search"]) }
+        if !tools.isEmpty { body["tools"] = tools }
+        return body
+    }
+
+    private static func responseMessages(_ message: AIMessage) -> [[String: Any]] {
+        if !message.responseItems.isEmpty {
+            return message.responseItems.compactMap { $0.jsonObject as? [String: Any] }
+        }
+        if let result = message.toolResult {
+            return [["type": "function_call_output", "call_id": result.callID, "output": result.content]]
+        }
+        var items: [[String: Any]] = []
+        if !message.images.isEmpty || !message.documents.isEmpty {
+            var parts: [[String: Any]] = []
+            if let text = message.text.nonEmpty { parts.append(["type": "input_text", "text": text]) }
+            parts += message.images.map { ["type": "input_image", "image_url": $0.dataURL] }
+            parts += message.documents.map {
+                ["type": "input_file", "filename": $0.name, "file_data": $0.dataURL]
+            }
+            items.append(["role": message.role.rawValue, "content": parts])
+        } else if let text = message.text.nonEmpty {
+            items.append(["role": message.role.rawValue, "content": text])
+        }
+        items += message.toolCalls.map {
+            ["type": "function_call", "call_id": $0.id, "name": $0.name, "arguments": $0.arguments]
+        }
+        return items
     }
 
     private static func openAI(
@@ -27,8 +75,12 @@ enum AIRequestBody {
         if input.webSearch, configuration.provider == .openRouter {
             body["plugins"] = [["id": "web"]]
         }
-        if let effort = configuration.effort, configuration.provider == .openRouter {
-            body["reasoning"] = ["effort": effort]
+        if let effort = configuration.requestedEffort {
+            if configuration.provider == .openRouter {
+                body["reasoning"] = ["effort": effort]
+            } else if !configuration.disablesThinking {
+                body["reasoning_effort"] = effort
+            }
         }
         if configuration.disablesThinking {
             body["thinking"] = ["type": "disabled"]
@@ -47,6 +99,11 @@ enum AIRequestBody {
         return body
     }
 
+    /// The basic version: later ones filter through code execution, which not every model runs.
+    private static var anthropicWebSearch: [String: Any] {
+        ["type": "web_search_20250305", "name": "web_search", "max_uses": 5]
+    }
+
     private static func anthropic(
         _ input: AIRequest, configuration: AIHTTPConfiguration
     ) -> [String: Any] {
@@ -57,18 +114,19 @@ enum AIRequestBody {
         var body: [String: Any] = [
             "model": configuration.model,
             "messages": anthropicMessages(input.messages),
-            "max_tokens": input.maxOutputTokens,
+            "max_tokens": configuration.maxOutputTokens ?? input.maxOutputTokens,
             "stream": true
         ]
         if !systemParts.isEmpty { body["system"] = systemParts.joined(separator: "\n\n") }
-        if !input.tools.isEmpty {
-            body["tools"] = input.tools.map {
-                [
-                    "name": $0.name, "description": $0.description,
-                    "input_schema": $0.parameters.jsonObject
-                ]
-            }
+        if let effort = configuration.requestedEffort { body["output_config"] = ["effort": effort] }
+        var tools: [[String: Any]] = input.tools.map {
+            [
+                "name": $0.name, "description": $0.description,
+                "input_schema": $0.parameters.jsonObject
+            ]
         }
+        if input.webSearch { tools.append(anthropicWebSearch) }
+        if !tools.isEmpty { body["tools"] = tools }
         return body
     }
 
@@ -84,12 +142,7 @@ enum AIRequestBody {
             return [
                 "role": message.role.rawValue,
                 "content": text ?? "",
-                "tool_calls": message.toolCalls.map {
-                    [
-                        "id": $0.id, "type": "function",
-                        "function": ["name": $0.name, "arguments": $0.arguments]
-                    ]
-                }
+                "tool_calls": message.toolCalls.map(openAIToolCall)
             ]
         }
         let hasAttachments = !message.images.isEmpty || !message.documents.isEmpty
@@ -104,6 +157,17 @@ enum AIRequestBody {
             ["type": "file", "file": ["filename": $0.name, "file_data": $0.dataURL]]
         }
         return ["role": message.role.rawValue, "content": parts]
+    }
+
+    private static func openAIToolCall(_ call: AIToolCall) -> [String: Any] {
+        var encoded: [String: Any] = [
+            "id": call.id, "type": "function",
+            "function": ["name": call.name, "arguments": call.arguments]
+        ]
+        if let signature = call.thoughtSignature {
+            encoded["extra_content"] = ["google": ["thought_signature": signature]]
+        }
+        return encoded
     }
 
     /// Anthropic takes tool results as user content, and a run of them has to arrive as one turn.

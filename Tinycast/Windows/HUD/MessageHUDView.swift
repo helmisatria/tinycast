@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// The message pill, led by its tone's mark or a spinner. See docs/ui.md#dialogs--hud.
 struct MessageHUDView: View {
     enum Accessory {
         case tone(DialogTone)
@@ -58,7 +57,6 @@ struct MessageHUDView: View {
         .frame(maxWidth: metrics.size.hudMaxWidth, alignment: .leading)
         .fixedSize()
         .background { glow }
-        // Not glass: with nothing to lens it falls back to an opaque backing and shows.
         .background(hovered ? Theme.Colors.controlHover : Theme.Colors.panelScrim)
         .background(GlassEffectView())
         .clipShape(Capsule())

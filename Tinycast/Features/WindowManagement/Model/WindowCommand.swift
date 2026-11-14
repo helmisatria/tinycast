@@ -32,6 +32,10 @@ struct WindowCommand: Identifiable, Hashable, Sendable {
         case moveRight = "move-right"
         case moveUp = "move-up"
         case moveDown = "move-down"
+        case moveToLeftEdge = "move-to-left-edge"
+        case moveToRightEdge = "move-to-right-edge"
+        case moveToTopEdge = "move-to-top-edge"
+        case moveToBottomEdge = "move-to-bottom-edge"
         case nextDisplay = "next-display"
         case previousDisplay = "previous-display"
         case toggleFullscreen = "toggle-fullscreen"
@@ -41,7 +45,6 @@ struct WindowCommand: Identifiable, Hashable, Sendable {
 
     /// What the mover has to do, so its dispatch stays exhaustive over the catalog.
     enum Kind: String, Sendable {
-        /// Resolve a target frame from the screen and write it.
         case geometry
         /// Geometry too, but sourced from the recorded pre-action frame rather than computed.
         case restore
@@ -64,24 +67,24 @@ struct WindowCommand: Identifiable, Hashable, Sendable {
 
         var title: String {
             switch self {
-            case .halves: return "Halves"
-            case .quarters: return "Quarters"
-            case .fourths: return "Fourths"
-            case .thirds: return "Thirds"
-            case .sizing: return "Sizing"
-            case .moving: return "Moving"
-            case .fullscreen: return "Fullscreen"
-            case .spaces: return "Spaces"
+            case .halves: return String(localized: "Halves")
+            case .quarters: return String(localized: "Quarters")
+            case .fourths: return String(localized: "Fourths")
+            case .thirds: return String(localized: "Thirds")
+            case .sizing: return String(localized: "Sizing")
+            case .moving: return String(localized: "Moving")
+            case .fullscreen: return String(localized: "Fullscreen")
+            case .spaces: return String(localized: "Spaces")
             }
         }
     }
 
     let id: ID
     let name: String
+    let englishName: String
     let sfSymbol: String
     let kind: Kind
     let group: Group
-    /// Only the four halves honour `WindowCycle`; the rest ignore the step they are handed.
     let cyclesOnRepeat: Bool
     /// False for the nudges, so the mover never writes `kAXSizeAttribute` for them.
     let resizes: Bool
@@ -91,9 +94,10 @@ struct WindowCommand: Identifiable, Hashable, Sendable {
 
 enum WindowCommandCatalog {
     static let all: [WindowCommand] = WindowCommand.ID.allCases.map { id in
-        WindowCommand(
-            id: id, name: name(for: id), sfSymbol: symbol(for: id), kind: kind(for: id),
-            group: group(for: id), cyclesOnRepeat: cyclesOnRepeat.contains(id),
+        let name = name(for: id)
+        return WindowCommand(
+            id: id, name: name.resolved(), englishName: name.key, sfSymbol: symbol(for: id),
+            kind: kind(for: id), group: group(for: id), cyclesOnRepeat: cyclesOnRepeat.contains(id),
             resizes: !movesOnly.contains(id))
     }
 
@@ -113,13 +117,15 @@ enum WindowCommandCatalog {
     }
 
     static let cyclesOnRepeat: Set<WindowCommand.ID> = [
-        .leftHalf, .rightHalf, .topHalf, .bottomHalf
+        .leftHalf, .rightHalf, .topHalf, .bottomHalf, .centerHalf
     ]
 
-    /// Nudges reposition without ever touching the size.
-    static let movesOnly: Set<WindowCommand.ID> = [.moveLeft, .moveRight, .moveUp, .moveDown]
+    static let movesOnly: Set<WindowCommand.ID> = [
+        .moveLeft, .moveRight, .moveUp, .moveDown,
+        .moveToLeftEdge, .moveToRightEdge, .moveToTopEdge, .moveToBottomEdge
+    ]
 
-    private static func name(for id: WindowCommand.ID) -> String {
+    private static func name(for id: WindowCommand.ID) -> LocalizedStringResource {
         switch id {
         case .leftHalf: return "Left Half"
         case .rightHalf: return "Right Half"
@@ -151,6 +157,10 @@ enum WindowCommandCatalog {
         case .moveRight: return "Move Right"
         case .moveUp: return "Move Up"
         case .moveDown: return "Move Down"
+        case .moveToLeftEdge: return "Move to Left Edge"
+        case .moveToRightEdge: return "Move to Right Edge"
+        case .moveToTopEdge: return "Move to Top Edge"
+        case .moveToBottomEdge: return "Move to Bottom Edge"
         case .nextDisplay: return "Move to Next Display"
         case .previousDisplay: return "Move to Previous Display"
         case .toggleFullscreen: return "Toggle Fullscreen"
@@ -189,6 +199,10 @@ enum WindowCommandCatalog {
         case .moveRight: return "arrow.right"
         case .moveUp: return "arrow.up"
         case .moveDown: return "arrow.down"
+        case .moveToLeftEdge: return "arrow.left.to.line"
+        case .moveToRightEdge: return "arrow.right.to.line"
+        case .moveToTopEdge: return "arrow.up.to.line"
+        case .moveToBottomEdge: return "arrow.down.to.line"
         case .nextDisplay: return "rectangle.on.rectangle.angled"
         case .previousDisplay: return "rectangle.on.rectangle.angled"
         case .toggleFullscreen: return "arrow.up.left.and.arrow.down.right.square"
@@ -219,7 +233,8 @@ enum WindowCommandCatalog {
         case .maximize, .almostMaximize, .reasonableSize, .maximizeHeight, .maximizeWidth, .center,
             .centerHalf, .centerTwoThirds, .makeLarger, .makeSmaller, .restore:
             return .sizing
-        case .moveLeft, .moveRight, .moveUp, .moveDown, .nextDisplay, .previousDisplay:
+        case .moveLeft, .moveRight, .moveUp, .moveDown, .moveToLeftEdge, .moveToRightEdge,
+            .moveToTopEdge, .moveToBottomEdge, .nextDisplay, .previousDisplay:
             return .moving
         case .toggleFullscreen:
             return .fullscreen

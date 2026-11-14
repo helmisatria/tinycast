@@ -23,9 +23,9 @@ commands and global shortcuts can show, search, or extend the collection.
   and a button is lit exactly when its toggle would remove that formatting.
 - **Only the active note can be dirty.** Switching, creating, renaming, and deleting first flush it, so
   collection navigation cannot abandon an in-memory draft.
-- **Tinycast is the only writer.** There is no watcher and no revision check: a save replaces the file
-  with what is in the editor. Every show re-lists the folder, so a note added outside appears, but the
-  active draft is never re-read from disk.
+- **Tinycast is the only writer while editing.** There is no watcher or disk revision check: a save
+  replaces the file with what is in the editor. Every show re-lists the folder and reloads the clean
+  active note; an unsaved draft is retained, including after a failed save.
 - **Search is on demand and unindexed.** An empty switcher query reads metadata plus the head of every
   unnamed note; a nonempty query reads bodies sequentially off-main and retains no collection-sized
   source cache.
@@ -33,12 +33,18 @@ commands and global shortcuts can show, search, or extend the collection.
   commands are absent, and enabling alone does not enumerate or create the Notes directory.
 - **The collection may be empty.** Deleting the last note is allowed and creates no replacement; the
   window shows its empty state and Create Note still works from there.
-- **The user owns the window size.** AppKit resizes and autosaves the frame; the controller only
-  clamps it to the floor below which the title bar's own parts collide.
-- **The editor is the one surface snippets expand into.** `NoteTextView` adopts `InjectableTextView`,
+- **The window's height always fits the note.** Every edit, note switch and bar toggle grows or
+  shrinks it between the 180pt floor and 860pt, or the screen's visible height; past that the editor
+  scrolls. The top edge holds until the bottom would leave the visible frame, then the window moves
+  up. A manually dragged height lasts until the next edit. The height is the sum of TextKit's layout
+  fragment heights, laid out from the top a paragraph at a time until it passes the tallest window: the
+  text view's frame never gets shorter than its clip view, and until the next draw the lines below an
+  edit keep their old origins, so neither the frame nor the last fragment's position can be read on
+  `didChange`.
+- **The editor is a surface snippets expand into.** `NoteTextView` adopts `InjectableTextView`,
   so a typed keyword — and the Snippets browser's ↵ — is written straight into the text storage
   rather than posted as events at whichever app happens to be frontmost. Quick Actions also read and
-  replace its selected text in process. Nothing else in Tinycast adopts it: see
+  replace its selected text in process. Only AI Chat's composer adopts it too: see
   [snippets.md](snippets.md#text-delivery-and-pasteboard-safety).
 
 ## Storage and identity
@@ -74,6 +80,7 @@ skipped, block and inline Markdown markers are dropped whether or not rendering 
 capped to 120 characters so no row or title bar has to carry a paragraph. `NoteSummary.title` remains the filename; `displayTitle` is what every
 surface renders — switcher rows and their VoiceOver labels, the Trash confirmation, the window title,
 and the title band of `NoteSearch`, so a fuzzy query reaches a note nobody has named.
+An empty unnamed note displays a localized Untitled label, preserving its filename and numeric suffix.
 
 `list()` reads at most 4 KB of each unnamed note to derive it, and a named note costs nothing beyond
 the enumeration it already pays for. The **active** note derives from the live draft rather than the
@@ -105,6 +112,12 @@ failed flush retains the draft for retry.
 - **Show Notes** toggles the panel: it selects the last active note and shows it, or hides a visible one.
 - **Create Note** creates and selects one unique Untitled note, including from an empty channel.
 - **Search Notes** shows the same panel with the switcher open and its search field focused.
+
+Settings > Notes > **Show in Menu Bar** is `AppSettings.notesShowsInMenuBar`, off when absent and
+carried by settings backups. While it and Notes are both on, `NotesCoordinator` owns a
+`NotesMenuBarController`: a click on its status item is Show Notes, and a right-, Control- or
+Option-click opens a menu of Create Note and Search Notes. Turning either setting off removes the
+status item rather than hiding it.
 
 Command-N creates, Command-P opens or refocuses the switcher, Command-O opens the Notes folder, and
 Command-F opens AppKit's find bar in the active note. Escape closes the find bar or switcher before
@@ -200,7 +213,10 @@ carries a `NoteBlockDecoration` is laid out by `NoteBlockLayoutFragment`, which 
 their language label, quote bars, rules, bullets, the source's own list numbers, and checkboxes, all
 list markers in a neutral gray. Vertical
 spacing comes from paragraph styles: overriding the fragment's frame would leave the caret above the
-glyphs. There are no text attachments, overlay controls, `NSTextList`, `NSTextTable` or private API.
+glyphs. A marker sits on the item's first line of text, not its first line fragment: a first word
+too wide for the line wraps below the hidden marker, leaving the marker a line of almost no height,
+and the checkbox hit test reads the same line. There are no text attachments, overlay controls,
+`NSTextList`, `NSTextTable` or private API.
 
 ### Editing
 
@@ -243,7 +259,7 @@ AppKit still owns typing, selection, Cut, Copy, Paste, Select All, Find, marked 
 characters and undo grouping. The editor handles ⌘Z and ⇧⌘Z while focused, including in the
 non-activating panel and with rendering off. Its native undo manager holds one linear history in
 memory; editing after undo discards redo. The coordinator observes undo and redo completion with
-main-actor notifications, so both reach autosave, rendering, formatting and the character count.
+main-actor notifications, so both reach autosave, rendering, formatting and the counts.
 Copy yields raw Markdown and VoiceOver reads the source. Changing the note
 identity or editor epoch reinstalls and restyles the string and clears the previous document's undo
 history. Snippets expand through `insertText` and are styled like typed text. The empty-note placeholder
@@ -252,19 +268,19 @@ is drawn in the text view, so opening the find bar moves it with the editor cont
 ### The formatting bar
 
 While Render Markdown and Show Formatting Bar are both on, the band under the editor holds the
-character count at its leading edge and the formatting bar at its trailing edge. The bar is
+word and character counts at its leading edge and the formatting bar at its trailing edge. The bar is
 `NoteFormattingBar`, a frosted capsule in the title bar's recipe. It starts collapsed to one round
 `paintbrush` button; ⌥⌘T or a click expands it, and the buttons slide out from behind that button:
 a heading menu, Bold, Italic, Strikethrough, Inline Code and Link, then Code Block and Quote, then
 Numbered, Bullet and Task List. Hovering a button shows its name and shortcut. Each button is a
-28-point square, so the whole row fits the smallest window. The count hides when the row leaves it no
+28-point square, so the whole row fits the smallest window. The counts hide when the row leaves them no
 lane, and the band never widens the note.
 
 Expanded or collapsed is window state, not a preference: `AppCore` reads and writes it under
 `notesFormattingBarExpanded` in `UserDefaults` and hands it to `NotesCoordinator`, the way it hands
 the store the active note's filename. It is deliberately not an `AppSettings` key, so no settings
-backup carries it. With Show Formatting Bar off there is no round button at all and the count returns
-to its own footer.
+backup carries it. With Show Formatting Bar off there is no round button at all and the counts return
+to their own footer.
 
 `NoteEditorView` reports `NoteMarkdownEditing.formatting(source:selection:markdown:)` on every
 install, edit and selection change, and `NotesCoordinator` publishes it only when it changed. That
@@ -290,9 +306,12 @@ carried by settings backups. It only takes effect while Render Markdown is on, a
 otherwise.
 
 An empty note shows a `Start writing…` placeholder aligned to the 16-point text container inset. The
-character count comes straight off `NSTextStorage.length` and sits in a footer under the editor, or at
-the leading end of the formatting bar's band while the bar shows. Both belong to the editor surface,
-so neither appears when no note is active.
+character count comes straight off `NSTextStorage.length`. The word count is `NoteWordCount`: ICU word
+boundaries over the source, so Markdown markers and punctuation are not words and text without spaces
+still splits into words. It costs a pass over the whole note, so `NotesCoordinator` runs it off-main
+after every report and applies only the result for the current editor input. Both counts sit in a
+footer under the editor, or at the leading end of the formatting bar's band while the bar shows. Both
+belong to the editor surface, so neither appears when no note is active.
 
 ## Autosave
 
@@ -304,26 +323,30 @@ vetoes the quit.
 **A save overwrites whatever is on disk.** There is no watcher, no revision comparison and no conflict
 state: editing the *active* note in another app while Tinycast has it open loses that edit the next time
 the debounce fires. Open Notes Folder (⌘O) invites exactly that, and this is the accepted trade for a
-feature whose whole job is one local editor. Every other external change is picked up, because showing
-the window re-lists the folder before it presents anything.
+feature whose whole job is one local editor. Showing the window re-lists the folder and reloads the
+active note if it is clean, waiting for an in-flight save first. An unsaved draft, including one whose
+save failed, stays in the editor. Edits or selection changes during the read retire its result.
+Unchanged contents retain editor history; a changed source or note identity resets it. If the active
+file was removed, loading chooses a remaining note, or the empty state when none remain.
 
 Undo notifications use typed Foundation observations on macOS 26 and selector observations on
 macOS 15. Both publish the restored source and character count synchronously after Undo or Redo.
 
 ## Verification
 
-`Tests/notes-test.swift` compiles the shipped Notes model and service sources with the real fuzzy
+`Tests/NotesTests.swift` compiles the shipped Notes model and service sources with the real fuzzy
 matcher. It covers repository safety, unique-name claiming, derived titles, search, selection,
-autosave, empty collections, switcher interaction, and cancellation, plus the Markdown parser, every
-edit plan, the formatting each selection reports and the reveal policy.
+autosave, external reloads, draft preservation, empty collections, switcher interaction, and
+cancellation, plus the Markdown parser, every edit plan, the formatting each selection reports, the
+reveal policy and the word count.
 
-`Tests/notes-editor-test.swift` uses real TextKit 2 and AppKit undo objects. It runs the native
+`Tests/NotesEditorTests.swift` uses real TextKit 2 and AppKit undo objects. It runs the native
 Cut/Copy/Paste, the native find bar, Unicode and marked-text cases with rendering off and on, and covers
 undo isolation, undo and redo shortcut routing, source publication and character count, linear history,
 exact source after styling, hidden and revealed markers, restyling after edits and after undo, block
 decorations and layout fragments, list keys, chords, the task rule, checkbox toggles, link schemes,
 pasting a URL, and the formatting reports and `format(_:)` the formatting bar uses.
-`Tests/notes-editor-performance.swift` times install, typing and caret moves on a
-100,000-character note; its budget is in `docs/testing.md`. Window chrome is not automated:
+`Tests/NotesEditorPerformanceTests.swift` times install, typing, the window fit's height read and caret
+moves on a 100,000-character note; its budget is in `docs/testing.md`. Window chrome is not automated:
 the Notes manual sweep in `docs/testing.md` covers commands, shortcuts, switcher, focus restoration,
 Finder, Trash recovery, and accessibility.

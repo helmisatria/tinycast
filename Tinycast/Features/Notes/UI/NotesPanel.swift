@@ -2,7 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 
 /// Editor and switcher differ only in style mask and chords, so one panel serves both.
-final class NotesPanel: NSPanel {
+final class NotesPanel: NSPanel, AnimatedPanel {
     var onEscape: (() -> Void)?
     /// ⌘⌫ is keyed separately: only its key code survives every keyboard layout.
     var onDeleteChord: (() -> Bool)?
@@ -13,6 +13,8 @@ final class NotesPanel: NSPanel {
     /// False for the heading menu, so the editor keeps its caret, reveal and chords beneath it.
     var acceptsKey = true
     var onMouseDown: (() -> Void)?
+    /// The system title bar runs its own double-click action, so the band claims it before AppKit.
+    var claimsTitleBarDoubleClick: ((NSEvent) -> Bool)?
 
     private let acceptsMain: Bool
 
@@ -32,7 +34,7 @@ final class NotesPanel: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
-        animationBehavior = .none
+        followMotion()
         isReleasedWhenClosed = false
         isRestorable = false
         contentView = content
@@ -58,6 +60,11 @@ final class NotesPanel: NSPanel {
 
     override func sendEvent(_ event: NSEvent) {
         if event.type == .leftMouseDown || event.type == .rightMouseDown { onMouseDown?() }
+        if event.type == .leftMouseDown, event.clickCount == 2,
+            claimsTitleBarDoubleClick?(event) == true
+        {
+            return
+        }
         // The search and rename fields own Escape while they are editing.
         guard event.type == .keyDown, Int(event.keyCode) == kVK_Escape, !event.isARepeat,
             (firstResponder as? NSTextView)?.isFieldEditor != true
@@ -72,6 +79,8 @@ final class NotesPanel: NSPanel {
         onEscape?()
     }
 
-    override var canBecomeKey: Bool { acceptsKey }
+    static var refusesInheritedKey = false
+
+    override var canBecomeKey: Bool { acceptsKey && !Self.refusesInheritedKey }
     override var canBecomeMain: Bool { acceptsMain }
 }

@@ -1,8 +1,9 @@
 # Support
 
 One window, one checkout link, and a checkbox deciding whether it may ever reopen itself. Every other
-surface — the website's hero and footer, the docs sidebar, the README badge — is a bare link to the
-same URL, so `SupportCoordinator.checkout` is the only place the destination is written down.
+surface — the website's hero and footer, the docs sidebar, the README badge — links to the same URL,
+so `SupportCoordinator.checkout` is the only place the app's destination is written down. The website
+hero shares the checkout page's brief offer copy from `website/src/data/support.ts`.
 
 ## Invariants
 
@@ -11,38 +12,36 @@ same URL, so `SupportCoordinator.checkout` is the only place the destination is 
   bar, the launcher command and the reminder itself. Someone who has just read the pitch is not asked
   again next week, however they came to it, and one call site is what keeps that true.
 - **The reminder never takes focus from something the user started.** `presentIfDue()` returns without
-  presenting unless `AppCore.canInterruptUser`, which is `UpdateReadiness` over `AppCore.currentActivity`
-  — the same seven-case gate the update prompt uses, shared rather than copied. A withheld ask leaves
-  the anchor alone, so it is still owed and the pump comes back in ten minutes rather than a month.
+  presenting unless `AppCore.canInterruptUser`, which is `UpdateReadiness` over `AppCore.currentActivity`.
+  A withheld ask leaves the anchor alone, so it is still owed and the pump comes back in ten minutes rather than a month.
 - **The checkbox defaults on, and off means off forever.** `AppSettings.supportRemindersEnabled` reads
   `defaults.object(forKey:) == nil || defaults.bool(forKey:)`, so absence is on and a stored `false`
   survives. It rides a settings backup: it grants no capability, it silences a prompt, and a user who
   turned it off should stay off across a restore.
 - **The schedule state is a file, not a default.** `support-reminder.json` lives under
   `AppPaths.applicationSupport()`, not `caches()` — a purged cache would reset the anchor and ask
-  early. It holds `firstSeenAt` and `lastAskedAt` and nothing else; the *preference* stays in
+  early. It holds `firstSeenAt` and `lastAskedAt` and nothing else; the _preference_ stays in
   `AppSettings`, and the two never mix.
 - **The first ask lands one interval after first run, not after launch.** With no `lastAskedAt` the
   anchor is `firstSeenAt`, stamped the first time the store finds no file, so a fresh install is
   never asked on day one.
-- **One button, one link.** `SupportCoordinator.checkout` is the only destination, and no surface
-  restates what is behind it — the checkout page owns that, so nothing here can fall out of step
-  with it. Adding a second button means adding a second thing to keep in sync.
+- **One button, one link.** `SupportCoordinator.checkout` is the only app destination. The checkout
+  page owns the offer and fulfillment details; the website hero reuses its brief product copy.
+  Adding a second button means adding a second thing to keep in sync.
 - **The button is the composition, not its footer.** It sits under the hero at 46pt tall, because this
-  window asks where the update window reports — an actions row pinned to the bottom edge reads as a
-  utility dialog.
+  window asks rather than reports — an actions row pinned to the bottom edge reads as a utility dialog.
 - **Brand colour appears exactly twice**: the app icon, which is violet on its own, and the button.
 - **Support's views are Support's own.** `SupportActionButton` is private to `SupportWindowView`
   rather than reaching for Onboarding's card rows, which are that window's.
 
 ## How it is put together
 
-| Piece | Holds |
-| --- | --- |
-| `Model/SupportReminderSchedule.swift` | pure — seconds until the next ask, clamped at both ends |
-| `Service/SupportReminderStore.swift` | the JSON state, and the one `Task` pump that offers the ask |
-| `UI/SupportCoordinator.swift` | the window's lifecycle, the checkout link, the anchor write |
-| `UI/SupportWindowView.swift` | the window: hero, the button, and the reminder checkbox |
+| Piece                                 | Holds                                                       |
+| ------------------------------------- | ----------------------------------------------------------- |
+| `Model/SupportReminderSchedule.swift` | pure — seconds until the next ask, clamped at both ends     |
+| `Service/SupportReminderStore.swift`  | the JSON state, and the one `Task` pump that offers the ask |
+| `UI/SupportCoordinator.swift`         | the window's lifecycle, the checkout link, the anchor write |
+| `UI/SupportWindowView.swift`          | the window: hero, the button, and the reminder checkbox     |
 
 `SupportReminderStore.advance()` is one turn of the pump: it answers how long to sleep, and calls
 `onDue` when the wait has reached zero. `AppCore.start()` wires that closure to
@@ -63,9 +62,8 @@ the button and the reminder switch. Nothing carries a keyboard shortcut —
 with a custom button style there is no focus ring to advertise one, and ↵ silently opening a payment
 page is a surprise rather than a convenience.
 
-Only the mechanism is shared with the Software Update window — `AppWindowController`, the
-content-measured height and the `sheen` gradient. The layout deliberately is not: that window reports
-and closes, so its actions belong in a trailing row; this one asks, so the ask is the centrepiece.
+The window asks, so the ask is the centrepiece. It uses `AppWindowController`, a content-measured
+height and the `sheen` gradient.
 
 ## Where it is reachable from
 

@@ -64,6 +64,22 @@ final class AIChatState {
         history.setModel(model, id: session.id)
     }
 
+    /// Only an empty chat takes one; nil hands the chat back to the default model and every tool.
+    @discardableResult
+    func usePreset(_ preset: ChatPreset?) -> Bool {
+        guard session.messages.isEmpty, !isStreaming else { return false }
+        session.preset = preset?.stamp
+        session.model = preset?.model
+        toolScope = preset?.toolScope ?? ChatToolScope()
+        return true
+    }
+
+    /// An empty chat follows its preset's edits and deletion; a started one keeps its stamp.
+    func followPreset(id: UUID, to preset: ChatPreset?) {
+        guard session.preset?.presetID == id else { return }
+        usePreset(preset)
+    }
+
     /// Asks again for the last reply; the question and its attachments go out as they first did.
     @discardableResult
     func regenerate(
@@ -84,8 +100,10 @@ final class AIChatState {
     ) {
         let request = AIRequest(
             instructions: instructions,
-            messages: session.requestMessages(textBudget: contextBudget), webSearch: webSearch)
+            messages: session.requestMessages(textBudget: contextBudget), webSearch: webSearch,
+            conversationID: session.id)
         session.append(ChatMessage(role: .assistant, text: "", state: .streaming))
+        session.preset?.toolScope = toolScope
         isStreaming = true
         isThinking = false
         reasoningStartedAt = nil
@@ -104,7 +122,8 @@ final class AIChatState {
                 guard let self, !Task.isCancelled, self.replyGeneration == generation,
                     self.isStreaming
                 else { return }
-                self.finishLast(state: .failed, fallback: "The response ended unexpectedly.")
+                self.finishLast(
+                    state: .failed, fallback: String(localized: "The response ended unexpectedly."))
             } catch {
                 guard let self, !Task.isCancelled, self.replyGeneration == generation,
                     self.isStreaming
@@ -161,11 +180,17 @@ final class AIChatState {
             discardPendingText()
             return
         }
-        finishLast(state: .failed, fallback: "Cancelled")
+        finishLast(state: .failed, fallback: String(localized: "Cancelled"))
     }
 
     func startNewChat() {
         cancel()
+        clearSession()
+    }
+
+    /// A preset's tools belong to its chat, so the plain chat after it starts with every server on.
+    private func clearSession() {
+        if session.preset != nil { toolScope = ChatToolScope() }
         session = ChatSession()
         notice = nil
         clearStaging()
@@ -176,8 +201,14 @@ final class AIChatState {
     func open(id: UUID) -> Bool {
         if session.id == id, !session.messages.isEmpty { return true }
         guard let loaded = history.session(id: id) else { return false }
+        let leavesPreset = session.preset != nil
         cancel()
         session = loaded
+        if let preset = loaded.preset {
+            toolScope = preset.toolScope
+        } else if leavesPreset {
+            toolScope = ChatToolScope()
+        }
         notice = nil
         clearStaging()
         return true
@@ -186,9 +217,7 @@ final class AIChatState {
     func delete(id: UUID) {
         if session.id == id {
             cancel()
-            session = ChatSession()
-            notice = nil
-            clearStaging()
+            clearSession()
         }
         history.remove(id: id)
     }
@@ -198,13 +227,11 @@ final class AIChatState {
         session.messages.last { $0.role == .assistant && $0.usage != nil }?.usage
     }
 
-    /// True when this state is the one showing `id`; an empty chat holds nothing yet.
     func holds(_ id: UUID) -> Bool {
         session.id == id && !session.messages.isEmpty
     }
 
-    /// The line shown in the empty streaming bubble while nothing has arrived yet.
-    var liveStatus: String? { isThinking ? "Thinking…" : nil }
+    var liveStatus: String? { isThinking ? String(localized: "Thinking…") : nil }
 
     var lastAssistantText: String? {
         session.messages.last(where: { $0.role == .assistant && !$0.text.isEmpty })?.text
@@ -257,14 +284,14 @@ final class AIChatState {
             guard let index = message.toolUses.lastIndex(where: { $0.callID == id }) else { return }
             message.toolUses[index].state = isError ? .failed : .completed
             session.replaceLast(with: message)
-        case .toolCallRequested:
+        case .toolCallRequested, .responseOutput:
             break
         case .usage(let usage):
             guard var message = session.messages.last, message.role == .assistant else { return }
             message.usage = usage
             session.replaceLast(with: message)
         case .finished:
-            finishLast(state: .complete, fallback: "No response")
+            finishLast(state: .complete, fallback: String(localized: "No response"))
         }
     }
 
@@ -388,18 +415,20 @@ enum ChatAttachmentRefusal: Equatable, Sendable {
     var message: String {
         switch self {
         case .count:
-            return "\(AIAttachmentBudget.maxCount) attachments is all one message can carry."
-        case .size: return "That file is too big for this message — send these first."
+            return String(
+                localized: "\(AIAttachmentBudget.maxCount) attachments is all one message can carry.")
+        case .size: return String(localized: "This file is too large to attach.")
         case .textTooLong:
             let limit = AIAttachmentBudget.maxInlinedTextBytes / 1_024
-            return "That text file is too big to attach — \(limit) KB is the limit."
-        case .undecodable: return "That file isn't text Tinycast can read."
-        case .unreadable: return "That file could not be read."
+            return String(localized: "That text file is too big to attach — \(limit) KB is the limit.")
+        case .undecodable: return String(localized: "That file isn't text Tinycast can read.")
+        case .unreadable: return String(localized: "That file could not be read.")
         case .unsupported(let ext):
-            return "Tinycast can attach images, PDFs and text files, not .\(ext) files."
-        case .imagesUnsupported: return "This model can't read images. Switch model to attach one."
+            return String(localized: "Can't attach .\(ext) files — only images, PDFs and text.")
+        case .imagesUnsupported:
+            return String(localized: "This model can't read images. Switch model to attach one.")
         case .documentsUnsupported:
-            return "This model can't read PDFs. Switch model, or paste the text instead."
+            return String(localized: "This model can't read PDFs. Switch model or paste the text.")
         }
     }
 }

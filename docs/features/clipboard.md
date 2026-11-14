@@ -19,11 +19,16 @@
   plain-text default pastes it as it is, and ⌃⌘↵ on it falls back to ⌘↵ as on every other screen.
 - **Clipboard writes stamp a private `internalType` marker** so the poller skips Tinycast's own writes.
   If the writer and the poller ever disagree, the app re-captures its own pastes in a loop.
+- **Edit Entry rewrites a text entry in place and never adds one.** The id, pin and source app
+  stay; saving then copies it as Copy to Clipboard does, marker included, so the poller does not
+  record the edit a second time.
 - **Paste Sequentially never promotes, and its walk is frozen at the first press.** `PasteSequence`
   keeps every entry's id, newest first, and resolves each against the live history, so a promotion
   cannot repeat or skip an entry and a deleted one is passed over rather than pasted.
 - **`Model/ClipboardStore.swift` keeps to Foundation plus SQLite3 and no other app source**, so
-  `clipboard-test` can compile it standalone. It uses `isolated deinit` for its SQLite teardown.
+  `ClipboardTests` can compile it standalone. It uses `isolated deinit` for its SQLite teardown.
+- **An image capture keeps the generation from its pasteboard poll.** Clear History and store close
+  retire it across conversion and file writing; a stale capture inserts nothing and leaves no blob.
 - A database that cannot be opened is deleted and recreated. That is sound because a history is
   captured rather than authored, and there is no UI for an unavailable clipboard — `QuicklinkStore`
   deliberately does the opposite. It is **not** a licence to treat the file as disposable: it lives in
@@ -60,14 +65,24 @@ sensitive-type guards, which stay unconditional — a secret must never be recor
 arrives in. A bare screenshot carries no file URL and still falls through to the `.png`/`.tiff`
 branch untouched.
 
+**Rich text is the last resort.** A copy with no file URL, plain text or image, such as a web page's
+HTML-only Clipboard API write, is converted through `NSAttributedString`, RTF before HTML, and
+recorded as a plain text entry. It sits after the image branch because a browser's image copy
+carries an `<img>` fragment beside the pixels. The HTML importer runs WebKit on the main actor, so
+fragments over 256 KB are skipped to bound the stall.
+
 `ClipboardManager.fileURLs(on:volatileRoots:)` takes both the pasteboard and the roots as
-parameters, so `pasteboard-test` can drive an `NSPasteboard.withUniqueName()` and its own scratch
+parameters, so `PasteboardTests` can drive an `NSPasteboard.withUniqueName()` and its own scratch
 tree: a harness that touched `NSPasteboard.general` would land in the reader's own running Tinycast
 as a genuine copy. `PasteboardFiles` reads each item's own `public.file-url`, so a copied `http` URL stays a link;
 returns nil rather than an empty array, so the text branch runs; caps a batch at
 `maxCapturedFiles`, so a Finder select-all cannot insert ten thousand rows on one tick; and
 **rejects a file under a volatile root** (`/tmp`, `/var/folders`, `~/Library/Caches`), because an
-app that stages a temp export beside better inline content must keep the inline content. Paths come
+app that stages a temp export beside better inline content must keep the inline content. When the
+pasteboard also carries `.png` or `.tiff`, `volatileRoots(on:copiedFrom:)` adds the copying app's own
+`~/Library/Containers/<bundle ID>/`: macOS keeps another app's container closed to Tinycast, so a
+file staged there previews as an icon and goes stale, while its pixels record as an image. A
+container file without pixels, or one copied by another app such as Finder, stays a file. Paths come
 back reversed so the *first* file copied ends up leading the history. Durability checks stop after
 32 accepted files, and decoding stops with them: the reader takes the cap and the durability test
 together rather than filtering a list it has already decoded whole. Rejected paths do not consume
@@ -77,6 +92,11 @@ the cap, and even a rejected modern file URL suppresses the legacy filenames fal
 `ClipboardManager` runs a 0.5s `Timer` watching `NSPasteboard.general.changeCount`. To avoid
 re-capturing Tinycast's own writes, every write stamps a private `internalType` marker on the
 pasteboard and the poller skips anything carrying it.
+
+A ⌘C Tinycast sends to read a selection can't carry that marker, since the other app writes it.
+`pauseCapture()` and `resumeCapture()` bracket that borrow instead: the poller skips every tick in
+between, and the restore's baseline keeps the copy from being recorded once it resumes.
+`TextInjector` refuses a second borrow while one is in flight, so the pause is never nested.
 
 `stop()` is the off switch: it drops the timer and the fast-user-switching observers, and clears the
 `isCapturing` flag that `prepareForTinycastPasteboardMutation` reads — so a paste Tinycast performs
@@ -102,7 +122,20 @@ in-memory history).
 
 Image capture (TIFF→PNG re-encode + blob write) runs off the main actor via detached tasks; row
 inserts, original-text search, and pruning stay on the main actor.
-Image copy uses Foundation’s `mappedIfSafe` hint before publishing the original PNG and marker.
+Image copy uses Foundation’s `mappedIfSafe` hint before publishing the original PNG, its file URL
+and marker. The file URL is what a terminal pastes, as the path, since it ignores image data; there
+is deliberately no `.string`, which a rich text field would take over the image.
+
+**Tiles and previews decode a copy, not the blob.** A PNG can't decode partially, so a 64px tile of a
+6K screenshot cost its full bitmap. The first draw of an owned image has `ClipboardTextHelper` write
+the `ImageDerivative` copy it needs, 256px for a row or 1080px for the preview, to
+`images/.thumbnails/` (excluded from backup); later draws decode those. Without a readable copy, from a
+failed or timed-out helper or a size past 1080px, the original is decoded in the app as before.
+Copies are made and deleted on one serial `ImageDerivative.queue`, so a copy's delete waits out the
+copy in flight; the blob itself is still deleted at once. The helper's wait runs on that queue, off
+the cooperative pool, with a 10 s deadline and the caller's cancellation. `load` sweeps copies whose
+blob is gone, which a quit before the queue ran can leave. Copies are keyed by the blob's whole file
+name. An image outside `images/`, such as a Raycast import, never gets copies.
 
 **A backup reads the whole table, not `items`.** `forEachStoredItem(inDatabaseAt:)` is `nonisolated`
 and opens a second connection, because the resident window stops at 1000 rows while the table is
@@ -230,6 +263,31 @@ bytes, so a text-dense scan can copy *partial* text under a success HUD, and an 
 extracts as empty and lands in **No text found**. The source row is not promoted — a copy is not a
 paste.
 
+## Edit an entry
+
+**Edit Entry** (⌘E, or its ⌘K row) opens a `.text` entry in a Tinycast dialog over the dimmed
+palette. A file entry never offers it, because its text is a path and rewriting it would repoint
+the row. `ClipboardEditField` is the dialog's accessory: a code-mode `FormTextArea`, since smart
+quotes or autocorrect would corrupt a token, at a fixed height that scrolls rather than grows the
+panel. ↵ starts a new line as in any editor, so ⌘↵ saves and Esc cancels —
+`DialogAccessory.acceptsLineBreaks` is what hands ↵ to the field. An input method's ↵ always commits
+its marked text, in every dialog.
+
+`ClipboardStore.updateText(_:of:)` rewrites the row's `text` under the same id, so the `items_au`
+trigger reindexes FTS and nothing else changes. `Paster.copy` then writes it marked and promotes it
+unless pinned, and the palette stays up with the row selected and scrolled into view, so ⌘V pastes
+the edit and so does ↵ on the row. A query or type filter that hides the edit is cleared; matching
+ones stay. The palette preserves the row through its query and filter observers, including a pin
+past the first row. An empty edit changes nothing. An entry deleted while open — by
+retention, say — is not brought back: `updateText` answers nil and the text goes on the pasteboard
+**unmarked**, entering history as a new copy rather than being lost. A row found by FTS past the
+resident window has no in-memory copy to replace, so the store drops its search memo instead.
+Database write failures throw instead of taking the deleted-entry path: the HUD reports the failure,
+and neither the clipboard nor the selection changes.
+An edit is held to `ClipboardStore.maxTextLength`, the same 32,000 characters capture records, so a
+longer one is refused with a HUD and nothing changes; past that, every later paste of the entry
+would reindex it on the main actor.
+
 ## Type filter
 
 The clipboard header carries a `ClipboardFilterButton` at the trailing edge of the search field —
@@ -258,7 +316,7 @@ is a single token by definition. That last step is the only one needing judgemen
 and `index.html` are
 domain-shaped — so a bare domain must be lower case (which is what keeps `Safari.app` out) and end
 in one of a compact set of TLDs people actually copy. It is a heuristic whose worst case files a row
-under the wrong type, and `clipboard-test` pins the cases that matter.
+under the wrong type, and `ClipboardTests` pins the cases that matter.
 
 `search(_:filter:)` filters **after** the pinned/rest split, so a matching pin still leads its block
 in pin order, and the filter joins the search memo's key — keying on the query alone would serve
@@ -293,7 +351,7 @@ is the format's business, not the value's. The rest of CSS Color 4 — the space
 and then removed: they
 restate the same four answers, and a row you scroll past to reach the one you wanted costs more
 than it gives. `oklch()` stays as the one perceptual space people write, and `hsl()` keeps one
-decimal because whole degrees cost up to 5/255 on the way back. `clipboard-test` sweeps every
+decimal because whole degrees cost up to 5/255 on the way back. `ClipboardTests` sweeps every
 offered notation and re-parses it, bar `oklch()`: it states fewer digits than the channel the
 sweep compares to.
 
@@ -367,7 +425,7 @@ uses the current query and type filter, so its first entry is the first visible 
 a no-op. They are fixed to the physical number row, with ⌘1…⌘9 then ⌘0 as their labels.
 
 `load` reads every pinned row plus the newest 1000 unpinned ones as two indexed branches over a
-partial index on `pinned_at` (`Tests/clipboard-test.swift` covers the shape). The single
+partial index on `pinned_at` (`Tests/ClipboardTests.swift` covers the shape). The single
 `pinned_at IS NOT NULL OR rowid >= ?` form reads better but cannot be driven from an index while
 holding row order, so it scans the whole table — ~12ms against ~1ms at 200k rows, on the main actor
 at launch.
@@ -377,7 +435,7 @@ at launch.
 A file copied in Finder is recorded as a reference, never as a copy: Tinycast writes nothing to
 disk for it, and the row's path points at the original wherever it lies. That is the whole reason
 `imagePath` stays nil for a `.file` row — `owns()` is the one ownership rule, and a path it never
-sees can never be deleted by `deleteBlob` or a retention cut. `clipboard-test`'s
+sees can never be deleted by `deleteBlob` or a retention cut. `ClipboardTests`'s
 `referencedFilesOutliveTheirRows` is the case that pins it, across `remove`, a retention cut and
 Clear History alike.
 
@@ -392,7 +450,7 @@ returns false, the coordinator raises a HUD, and the row survives — history is
 happened, and the recorded path is still the answer to "where was it?". The preview says so in
 place, and the Path row keeps showing where the file used to be.
 
-`FilePreviewThumbnailer` is the row tile and the preview still. `QLThumbnailGenerator` is the only
+`FilePreviewThumbnail` is the row tile and the preview still. `QLThumbnailGenerator` is the only
 thing that renders a *content* thumbnail for any type — a video's poster frame, a PDF's first page
 — and with `representationTypes: .all` it falls back to the type icon itself, so every file paints
 something through one path. It copies `ImageThumbnail`'s shape exactly: two byte-bounded caches

@@ -15,7 +15,7 @@ enum AIProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
         case .anthropic: return "Anthropic Claude"
         case .gemini: return "Google Gemini"
         case .openRouter: return "OpenRouter"
-        case .openAICompatible: return "OpenAI Compatible"
+        case .openAICompatible: return String(localized: "OpenAI Compatible")
         }
     }
 
@@ -29,21 +29,37 @@ enum AIProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
         }
     }
 
-    var apiShape: AIHTTPConfiguration.APIShape {
-        self == .anthropic ? .anthropic : .openAICompatible
+    func apiShape(for baseURL: URL?) -> AIHTTPConfiguration.APIShape {
+        if self == .anthropic { return .anthropic }
+        if self == .openAI, baseURL?.host()?.lowercased() == "api.openai.com" {
+            return .openAIResponses
+        }
+        return .openAICompatible
+    }
+
+    /// A vendor's search tool exists only on its own endpoint; OpenRouter's plugin rides any model.
+    func offersWebSearch(at baseURL: URL?) -> Bool {
+        switch self {
+        case .openRouter: return true
+        case .openAI: return apiShape(for: baseURL) == .openAIResponses
+        case .anthropic: return baseURL?.host()?.lowercased() == "api.anthropic.com"
+        case .gemini, .openAICompatible: return false
+        }
     }
 }
 
 struct AIConnection: Codable, Equatable, Identifiable, Sendable {
     struct ReasoningOptions: Codable, Equatable, Sendable {
         static let noEffort = "none"
+        static let providerDefault = "default"
+        static let ladder = ["minimal", "low", "medium", "high", "xhigh", "max"]
 
         let efforts: [String]
         let defaultEffort: String?
 
         /// Named for OpenRouter's own spelling, where `none` likewise disables reasoning entirely.
         static let thinkingSwitch = ReasoningOptions(
-            efforts: ["default", "none"], defaultEffort: "default")
+            efforts: [providerDefault, noEffort], defaultEffort: providerDefault)
 
         func resolvedEffort(_ preferred: String?) -> String? {
             guard !efforts.isEmpty else { return nil }
@@ -60,13 +76,13 @@ struct AIConnection: Codable, Equatable, Identifiable, Sendable {
     var models: [String]
     /// Models the catalog marked as taking images — only OpenRouter's says, so only it is gated.
     var visionModels: [String]
-    /// OpenRouter's per-model catalog metadata; absent for APIs that do not publish this contract.
     var reasoningOptions: [String: ReasoningOptions]?
+    var outputLimits: [String: Int]?
 
     init(
         id: UUID = UUID(), name: String = "", provider: AIProviderKind = .openAI,
         baseURL: String? = nil, models: [String] = [], visionModels: [String] = [],
-        reasoningOptions: [String: ReasoningOptions]? = nil
+        reasoningOptions: [String: ReasoningOptions]? = nil, outputLimits: [String: Int]? = nil
     ) {
         self.id = id
         self.name = name
@@ -75,17 +91,62 @@ struct AIConnection: Codable, Equatable, Identifiable, Sendable {
         self.models = models
         self.visionModels = visionModels
         self.reasoningOptions = reasoningOptions
+        self.outputLimits = outputLimits
     }
 
     /// A preset pointed away from its own API is a gateway, and only a gateway takes a thinking field.
     var takesThinkingField: Bool {
-        provider.apiShape == .openAICompatible
+        provider.apiShape(for: URL(string: baseURL)) == .openAICompatible
             && baseURL.trimmingCharacters(in: .whitespacesAndNewlines) != provider.defaultBaseURL
     }
 
-    /// A gateway publishes no catalog, so the only effort it is known to honour is the off switch.
+    /// A gateway's `none` is its thinking switch, offered without a declaration.
+    var declarableLevels: [String] {
+        let none = ReasoningOptions.noEffort
+        switch provider {
+        case .openRouter: return []
+        case _ where takesThinkingField: return ReasoningOptions.ladder
+        case .anthropic: return ["low", "medium", "high", "xhigh", "max"]
+        case .gemini: return ["minimal", "low", "medium", "high", none]
+        case .openAI, .openAICompatible: return ReasoningOptions.ladder + [none]
+        }
+    }
+
+    /// OpenRouter's catalog names each model's levels, so every other connection takes declared ones.
+    var takesDeclaredLevels: Bool { !declarableLevels.isEmpty }
+
     func reasoningOptions(for model: String) -> ReasoningOptions? {
         reasoningOptions?[model] ?? (takesThinkingField ? .thinkingSwitch : nil)
+    }
+
+    /// A chat keeps the effort it was given, so one this model no longer offers is never sent.
+    func offeredEffort(_ effort: String?, for model: String) -> String? {
+        guard let effort, reasoningOptions(for: model)?.efforts.contains(effort) == true else {
+            return nil
+        }
+        return effort
+    }
+
+    mutating func dropDeclaredLevels() {
+        guard provider != .openRouter else { return }
+        reasoningOptions = nil
+    }
+
+    func declaredLevels(for model: String) -> Set<String> {
+        Set(reasoningOptions?[model]?.efforts.filter(declarableLevels.contains) ?? [])
+    }
+
+    mutating func declareLevels(_ levels: Set<String>, for model: String) {
+        var efforts = declarableLevels.filter(levels.contains)
+        guard !efforts.isEmpty else {
+            reasoningOptions?[model] = nil
+            return
+        }
+        if takesThinkingField { efforts.append(ReasoningOptions.noEffort) }
+        if reasoningOptions == nil { reasoningOptions = [:] }
+        reasoningOptions?[model] = ReasoningOptions(
+            efforts: [ReasoningOptions.providerDefault] + efforts,
+            defaultEffort: ReasoningOptions.providerDefault)
     }
 
     var title: String {
@@ -98,7 +159,7 @@ struct AIConnection: Codable, Equatable, Identifiable, Sendable {
             images: provider != .openRouter || visionModels.contains(model),
             // Only the two shapes whose bodies Tinycast writes; a gateway bills the upload first.
             documents: provider == .openAI || provider == .anthropic,
-            webSearch: provider == .openRouter, tools: true)
+            webSearch: provider.offersWebSearch(at: URL(string: baseURL)), tools: true)
     }
 }
 
@@ -316,6 +377,7 @@ enum AIModelSelection: Codable, Equatable, Hashable, Sendable {
 struct AIHTTPConfiguration: Equatable, Sendable {
     enum APIShape: String, Sendable {
         case openAICompatible
+        case openAIResponses
         case anthropic
     }
 
@@ -324,22 +386,37 @@ struct AIHTTPConfiguration: Equatable, Sendable {
     let model: String
     let effort: String?
     let disablesThinking: Bool
+    let maxOutputTokens: Int?
+    let headers: [String: String]
 
     init(
         provider: AIProviderKind, baseURL: URL, model: String, effort: String? = nil,
-        disablesThinking: Bool = false
+        disablesThinking: Bool = false, maxOutputTokens: Int? = nil, headers: [String: String] = [:]
     ) {
         self.provider = provider
         self.baseURL = baseURL
         self.model = model
         self.effort = effort
         self.disablesThinking = disablesThinking
+        self.maxOutputTokens = maxOutputTokens
+        self.headers = headers
     }
 
-    var shape: APIShape { provider.apiShape }
+    var shape: APIShape { provider.apiShape(for: baseURL) }
+
+    var requestedEffort: String? {
+        effort == AIConnection.ReasoningOptions.providerDefault ? nil : effort
+    }
 
     var endpointURL: URL {
         switch shape {
+        case .openAIResponses:
+            if baseURL.path.hasSuffix("/responses") { return baseURL }
+            if baseURL.path.hasSuffix("/chat/completions") {
+                return baseURL.deletingLastPathComponent().deletingLastPathComponent()
+                    .appending(path: "responses")
+            }
+            return baseURL.appending(path: "responses")
         case .openAICompatible:
             if baseURL.path.hasSuffix("/chat/completions") { return baseURL }
             return baseURL.appending(path: "chat/completions")
@@ -357,8 +434,9 @@ enum AIEndpointPolicy {
 
         var errorDescription: String? {
             switch self {
-            case .invalidURL: return "Enter a valid provider base URL."
-            case .insecureRemoteURL: return "Remote AI providers require an HTTPS base URL."
+            case .invalidURL: return String(localized: "Enter a valid provider base URL.")
+            case .insecureRemoteURL:
+                return String(localized: "Remote AI providers require an HTTPS base URL.")
             }
         }
     }

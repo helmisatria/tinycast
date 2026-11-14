@@ -33,20 +33,22 @@ struct RootPaletteView: View {
     @State private var openMenu: OpenMenu?
     /// Sampled once by `openActions`, so the running-only rows can't appear while the menu is up.
     @State private var selectionIsRunning = false
-    /// Highlighted row of whichever menu is open; each open path sets where it starts.
     @State private var menuSelection = 0
     /// The argument field whose choices are up, so `menuContent` can rebuild the same menu.
     @State private var argumentOptionsField: String?
+    @State private var inputOptions: PopoverMenuContent?
     @State private var menuPanel = MenuPanelController()
     /// The palette's own window, reported by `WindowReader`; the menu hangs off its frame.
     @State private var hostWindow: NSWindow?
     /// The pending scroll request; modes are exclusive, so one piece of state serves all.
     @State private var scroll = ScrollIntent(kind: .top)
+    @State private var compactSelection = CompactBarSelection()
 
     /// Compact vs. full; the source of truth is on `AppCore`, so the two can't disagree.
     private var isCollapsed: Bool { core.paletteCoordinator.paletteIsCollapsed }
 
-    /// The current mode's screen: its rows are the visible order the flat selection indexes.
+    private var renderingOutset: CGFloat { isCollapsed ? Theme.Size.paletteGlassOutset : 0 }
+
     private var screen: any PaletteScreen {
         switch vm.mode {
         case .launcher:
@@ -63,9 +65,17 @@ struct RootPaletteView: View {
             return QuicklinkListScreen(
                 store: quicklinks, core: core, vm: vm, openActions: openActions,
                 openArgumentOptions: openArgumentOptions)
+        case .quicklinkEditor:
+            return QuicklinkEditorScreen(
+                coordinator: core.quicklinkCoordinator, openMenuCorner: menuCorner,
+                openInputMenu: openInputOptions)
         case .snippets:
             return SnippetsScreen(
                 store: snippets, core: core, vm: vm, openActions: openActions)
+        case .snippetEditor:
+            return SnippetEditorScreen(
+                coordinator: core.snippetCoordinator, openMenuCorner: menuCorner,
+                openInputMenu: openInputOptions)
         case .emoji:
             return EmojiScreen(
                 index: emojiIndex, frequent: frequentEmoji, pinned: core.pinnedEmoji, core: core, vm: vm,
@@ -88,6 +98,18 @@ struct RootPaletteView: View {
             return ScheduleScreen(
                 store: calendarStore, clock: meetingClock, core: core, vm: vm,
                 openActions: openActions)
+        case .eventEditor:
+            return EventEditorScreen(
+                coordinator: core.calendarCoordinator, openMenuCorner: menuCorner,
+                openInputMenu: openInputOptions)
+        case .customCommandEditor:
+            return CustomCommandEditorScreen(
+                coordinator: core.customCommandCoordinator, openMenuCorner: menuCorner,
+                openInputMenu: openInputOptions)
+        case .customCommands:
+            return CustomCommandListScreen(
+                store: core.customCommands, coordinator: core.customCommandCoordinator,
+                vm: vm, metrics: metrics, openActions: openActions)
         case .meetingDetails:
             return MeetingDetailsScreen(store: calendarStore, core: core)
         case .clipboard:
@@ -115,7 +137,6 @@ struct RootPaletteView: View {
         }
     }
 
-    /// The running command's rendered screen, flattened. `.empty` until the first commit lands.
     private var extensionScreen: ExtensionScreen {
         guard vm.mode == .extensionCommand, case .rendered(let tree) = extensions.state else {
             return .empty
@@ -162,7 +183,6 @@ struct RootPaletteView: View {
             })
     }
 
-    /// The file search type filter's rows, built the way the clipboard's are.
     private var fileSearchFilterContent: PopoverMenuContent {
         PopoverMenuContent(
             items: FileSearchFilter.allCases.map { filter in
@@ -185,6 +205,15 @@ struct RootPaletteView: View {
             })
     }
 
+    private var dictionaryScopeContent: PopoverMenuContent {
+        PopoverMenuContent(
+            items: DictionaryScope.allCases.map { scope in
+                PopoverMenuItem(title: scope.title, systemImage: scope.systemImage) {
+                    dictionary.select(scope)
+                }
+            })
+    }
+
     private var appMenuContent: PopoverMenuContent {
         let appName = Bundle.main.appDisplayName
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
@@ -193,25 +222,28 @@ struct RootPaletteView: View {
             header: title,
             items: [
                 PopoverMenuItem(
-                    title: "Changelog",
+                    title: String(localized: "Changelog"),
                     systemImage: "clock.arrow.trianglehead.2.counterclockwise.rotate.90"
                 ) {
-                    if let url = URL(string: "https://github.com/abue-ammar/tinycast/releases") {
+                    if let url = URL(string: "https://tinycast.dev/changelog/") {
                         openURL(url)
                     }
                 },
-                PopoverMenuItem(title: "About Tinycast", systemImage: "info.circle") {
+                PopoverMenuItem(title: String(localized: "About Tinycast"), systemImage: "info.circle") {
                     core.settingsCoordinator.showAbout()
                 },
-                PopoverMenuItem(title: "Support Tinycast", systemImage: "heart") {
+                PopoverMenuItem(title: String(localized: "Support Tinycast"), systemImage: "heart") {
                     core.supportCoordinator.showSupport()
                 },
-                PopoverMenuItem(title: "Settings", systemImage: "gearshape", shortcut: "⌘,") {
+                PopoverMenuItem(
+                    title: String(localized: "Settings"), systemImage: "gearshape", shortcut: "⌘,"
+                ) {
                     core.settingsCoordinator.showSettings()
                 },
                 PopoverMenuItem(
-                    title: "Quit \(appName)", systemImage: "rectangle.portrait.and.arrow.right",
-                    startsSection: true, isDestructive: true
+                    title: String(localized: "Quit \(appName)"),
+                    systemImage: "rectangle.portrait.and.arrow.right",
+                    isDestructive: true
                 ) {
                     NSApp.terminate(nil)
                 }
@@ -231,8 +263,9 @@ struct RootPaletteView: View {
             let filtered = appMenuContent.matching(ActionMenuSearchQuery(vm.menuQuery))
             return PaletteMenuContent(
                 popover: filtered.content, selection: $menuSelection,
+                visibleRows: Theme.Size.appMenuVisibleRows,
                 search: PopoverMenu.Search(
-                    placeholder: "Search for actions…", placement: .bottom),
+                    placeholder: String(localized: "Search for actions…"), placement: .bottom),
                 onActivate: activateMenuItem, preferredSelection: filtered.bestMatch)
         case .clipboardFilter:
             return headerMenu(
@@ -241,6 +274,8 @@ struct RootPaletteView: View {
             return headerMenu(fileSearchFilterContent, width: metrics.size.fileSearchFilterMenuWidth)
         case .emojiCategory:
             return headerMenu(emojiCategoryContent, width: metrics.size.emojiCategoryMenuWidth)
+        case .dictionaryScope:
+            return headerMenu(dictionaryScopeContent, width: metrics.size.fileSearchFilterMenuWidth)
         case .aiModel:
             return headerMenu(
                 AIModelMenu.models(coordinator: core.aiChatCoordinator, chat: quickAI),
@@ -261,6 +296,15 @@ struct RootPaletteView: View {
                 let popover = headerAccessory?.optionsMenu(field)
             else { return nil }
             return headerMenu(popover, width: metrics.size.menuWidth)
+        case .inputOptions(let corner):
+            guard let inputOptions else { return nil }
+            let width: CGFloat =
+                switch corner {
+                case .belowControl(let frame, _): max(metrics.size.formMenuMinimumWidth, frame.width)
+                default: metrics.size.formMenuMinimumWidth
+                }
+            return headerMenu(
+                inputOptions, width: width, extraRowsHeight: metrics.size.formMenuExtraRowsHeight)
         case .extensionAccessory:
             return extensionCommandScreen?.searchAccessoryMenu(
                 searchQuery: ActionMenuSearchQuery(vm.menuQuery),
@@ -294,21 +338,13 @@ struct RootPaletteView: View {
                     if !isCollapsed {
                         bottomBar(
                             pillLabel: screen.primaryActionTitle, showActionGroup: showActionGroup,
-                            formPrimaryShortcut: isExtensionForm,
+                            formPrimaryShortcut: screen.hidesSearchField && screen.actsWithoutRows,
+                            primaryActionEnabled: screen.isPrimaryActionEnabled(at: sel),
                             showActions: screen.hasActions(at: sel))
                     }
                 }
-                // The panel has no title bar, so this thin top margin is the only place left to grab it.
-                .overlay(alignment: .top) { topDragStrip }
-                // Never conditionally mounted: unmounting strands SwiftUI's hover target and eats clicks.
-                .overlay {
-                    Color.black.opacity(0.001)
-                        .contentShape(Rectangle())
-                        // Not a tap: a drifting press must still dismiss, the way a native menu's does.
-                        .gesture(DragGesture(minimumDistance: 0).onChanged { _ in closeMenus() })
-                        .onRightClick { closeMenus() }
-                        .allowsHitTesting(menuOpen)
-                }
+                // No title bar, so this thin top margin is the only place left to grab the panel.
+                .overlay(alignment: .topLeading) { topDragStrip }
                 // The menu lives in its own window; this only reports the one to hang it from.
                 .background(
                     WindowReader {
@@ -318,11 +354,12 @@ struct RootPaletteView: View {
                 )
                 // The window's frame is the size source, so the glass and clip stay matched.
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .background(Theme.Colors.panelScrim)
-                .background(GlassEffectView())
+                .background(isCollapsed ? .clear : Theme.Colors.panelScrim)
+                // Square, as rounded glass feathers its edge; the clip alone cuts a crisp corner.
+                .panelGlassBackdrop(isCollapsed: isCollapsed)
                 .overlay {
                     Theme.Colors.dialogDimming
-                        .opacity(core.isDimmingPaletteForDialog ? 1 : 0)
+                        .opacity(core.isDimmingPaletteForDialog && !isCollapsed ? 1 : 0)
                         .allowsHitTesting(false)
                 }
                 .animation(
@@ -331,8 +368,15 @@ struct RootPaletteView: View {
                             ? Theme.Duration.dialogEnter : Theme.Duration.dialogExit),
                     value: core.isDimmingPaletteForDialog
                 )
-                .clipShape(RoundedRectangle(cornerRadius: metrics.radius.panel, style: .continuous))),
-            selection: sel)
+                // Also the window's shape: without it, macOS shadows the default window outline.
+                .clipShape(
+                    RoundedRectangle(
+                        cornerRadius: isCollapsed ? 0 : metrics.radius.panel, style: .continuous
+                    )
+                    .inset(by: -renderingOutset))),
+            selection: sel
+        )
+        .padding(renderingOutset)
     }
 
     /// The emoji grid's observers, split out so `stateObservers` stays within type-checker reach.
@@ -348,7 +392,6 @@ struct RootPaletteView: View {
             }
             .onChange(of: vm.emojiGridColumnsOverride) { emojiGridChanged() }
             .onChange(of: settings.emojiGridColumns) { emojiGridChanged() }
-            // ⌘0 / ⌘+ / ⌘- arrive as a token, like ⌘. does. See `PaletteState.emojiGridZoomToken`.
             .onChange(of: vm.emojiGridZoomToken) {
                 guard let zoom = vm.emojiGridZoom else { return }
                 (screen as? EmojiScreen)?.zoom(zoom)
@@ -362,20 +405,30 @@ struct RootPaletteView: View {
         refreshActionsMenu()
     }
 
-    /// Split from `body` for the same reason `keyHandlers` is: one chain cannot carry them all.
+    /// Split from `stateObservers` so each chain type-checks with Xcode 26.
     @ViewBuilder
-    private func stateObservers(_ content: some View) -> some View {
+    private func queryObservers(_ content: some View) -> some View {
         emojiObservers(content)
             // Every show bumps focusToken so the search field refocuses.
             .onChange(of: vm.focusToken) {
+                resetCompactSelection()
                 searchFocused = !screen.hidesSearchField
+            }
+            .onChange(of: vm.isVisible) { resetCompactSelection() }
+            .onChange(of: vm.isComposing) {
+                if vm.isComposing { resetCompactSelection() }
+            }
+            .onChange(of: compactCommands) {
+                compactSelection.reconcile(commands: compactCommands)
             }
             // A preserved screen re-summons as it was left, so a menu must end with the palette.
             .modifier(PaletteHideObserver { if menuOpen { closeMenus() } })
             .onChange(of: vm.query) {
+                resetCompactSelection()
                 if vm.collapseQueryLineBreaks() { return }
-                land()
+                land(restoringSelection: true)
                 if vm.mode == .fileSearch { fileSearch.search(vm.query, filter: vm.fileSearchFilter) }
+                if vm.mode == .launcher { core.fileSearchCoordinator.searchFromLauncher(vm.query) }
                 if vm.mode == .dictionary { dictionary.lookUp(vm.query) }
                 if vm.mode == .menuSearch { menuSearch.filter(vm.query) }
                 if vm.mode == .switchWindows { windowSwitch.filter(vm.query) }
@@ -391,30 +444,37 @@ struct RootPaletteView: View {
             }
             .modifier(ExtensionSelectionForwarder(screen: extensionScreen, selection: vm.selection))
             // A narrower list means the old index points at a different row, or at none.
-            .onChange(of: vm.clipboardFilter) { land() }
+            .onChange(of: vm.clipboardFilter) { land(restoringSelection: true) }
             // The filter is part of the query, so narrowing re-runs it rather than thinning rows.
             .onChange(of: vm.fileSearchFilter) {
                 land()
                 fileSearch.search(vm.query, filter: vm.fileSearchFilter)
             }
+    }
+
+    /// Split from `body` for the same reason `keyHandlers` is: one chain cannot carry them all.
+    @ViewBuilder
+    private func stateObservers(_ content: some View) -> some View {
+        queryObservers(content)
             .onChange(of: vm.mode) {
                 vm.clipboardFilter = .all
                 vm.fileSearchFilter = .all
                 vm.emojiCategoryFilter = .all
                 vm.emojiGridColumnsOverride = nil
-                vm.fileSearchQuickLook = false
                 if menuOpen { closeMenus() }
-                land()
+                land(restoringSelection: true)
                 searchFocused = !screen.hidesSearchField
-                // Every way out of the Uninstall screen: back chevron, bare backspace, a fresh summon.
                 if vm.mode != .uninstall { uninstall.cancel() }
                 // Entering with no query is the blank screen's own request for recents.
                 if vm.mode == .fileSearch {
                     fileSearch.search(vm.query, filter: vm.fileSearchFilter)
+                } else if vm.mode == .launcher {
+                    core.fileSearchCoordinator.searchFromLauncher(vm.query)
                 } else {
                     fileSearch.cancel()
                 }
                 if vm.mode == .dictionary {
+                    dictionary.refreshScopes()
                     dictionary.lookUp(vm.query)
                 } else {
                     dictionary.reset()
@@ -424,7 +484,7 @@ struct RootPaletteView: View {
                 if vm.mode != .meetingDetails { calendarStore.clearDetails() }
                 if vm.mode != .rooms, vm.mode != .roomWindows { core.roomCoordinator.screensDidClose() }
                 // Leaving the screen any other way than Escape still ends the command's session.
-                if vm.mode != .extensionCommand, extensions.running != nil, !extensions.isAuthorizing {
+                if vm.mode != .extensionCommand, extensions.running != nil {
                     Task { await extensions.stop() }
                 }
             }
@@ -435,7 +495,12 @@ struct RootPaletteView: View {
             }
             // ⌘. arrives as a token rather than a key press. See `PaletteState.pinChordToken`.
             .onChange(of: vm.pinChordToken) { performShortcut(.pin) }
-            // ⌘1…⌘0 arrives as a slot index from AppKit keyCode matching.
+            .onChange(of: vm.queryRewriteToken) {
+                if menuOpen { closeMenus() }
+                searchFocused = true
+                // Next turn, past the refocus that selects all, so typing extends the answer.
+                Task { @MainActor in (hostWindow as? PalettePanel)?.moveFieldEditorCaretToEnd() }
+            }
             .onChange(of: vm.favoriteSlotToken) {
                 if let index = vm.favoriteSlotIndex { performShortcut(.favoriteSlot(index)) }
             }
@@ -455,10 +520,12 @@ struct RootPaletteView: View {
             .onAppear {
                 searchFocused = !screen.hidesSearchField
                 land()
+                focusPendingArgument()
             }
             .modifier(SearchFieldHiding(hidden: hidesSearchField, apply: applySearchFieldHiding))
             // Several paths flip `paletteIsCollapsed`, so resize the window to match.
             .onChange(of: core.paletteCoordinator.paletteIsCollapsed) {
+                resetCompactSelection()
                 core.paletteCoordinator.syncPaletteSize()
             }
     }
@@ -470,16 +537,21 @@ struct RootPaletteView: View {
             // Repeat included: holding the key keeps stepping, as the bare-key form does.
             .onKeyPress(keys: [.downArrow], phases: [.down, .repeat]) { press in
                 if let reorder = movePinnedOrFavorite(1, modifiers: press.modifiers) { return reorder }
-                // A control's own list owns every navigation key while it is up.
                 if vm.isControlListOpen { return .ignored }
+                if menuOpen {
+                    moveMenu(1)
+                    return .handled
+                }
+                // Marked text owns these keys: an IME drives its candidate window with them.
+                if vm.isComposing { return .ignored }
                 if isCollapsed {
+                    if compactSelection.command != nil {
+                        activateCompactSelection()
+                        return .handled
+                    }
                     // The compact bar shows no selection, so Down reveals the list's first row.
                     vm.selection = 0
                     core.paletteCoordinator.expandFromCompact()
-                    return .handled
-                }
-                if menuOpen {
-                    moveMenu(1)
                     return .handled
                 }
                 return moveVertically(1)
@@ -492,17 +564,21 @@ struct RootPaletteView: View {
                     moveMenu(-1)
                     return .handled
                 }
+                if vm.isComposing { return .ignored }
                 return moveVertically(-1)
             }
-            // Horizontal arrows step the grid; elsewhere they stay with the caret.
-            .onKeyPress(.leftArrow) {
+            .onKeyPress(keys: [.leftArrow], phases: [.down, .repeat]) { press in
                 if vm.isControlListOpen { return .ignored }
                 if menuOpen { return .handled }
+                if vm.isComposing { return .ignored }
+                if moveCompactSelection(-1, modifiers: press.modifiers) { return .handled }
                 return moveHorizontally(-1) ? .handled : .ignored
             }
-            .onKeyPress(.rightArrow) {
+            .onKeyPress(keys: [.rightArrow], phases: [.down, .repeat]) { press in
                 if vm.isControlListOpen { return .ignored }
                 if menuOpen { return .handled }
+                if vm.isComposing { return .ignored }
+                if moveCompactSelection(1, modifiers: press.modifiers) { return .handled }
                 return moveHorizontally(1) ? .handled : .ignored
             }
             // Plain ↵ runs an open menu's row or non-form selection; ⌘↵ submits forms.
@@ -513,6 +589,12 @@ struct RootPaletteView: View {
                     activateMenuItem(menuSelection)
                     return .handled
                 }
+                if isCollapsed, !command, !option {
+                    guard !vm.isComposing, !vm.isControlListOpen else { return .ignored }
+                    activateCompactSelection()
+                    return .handled
+                }
+                if vm.mode.isNativeEditor { return .ignored }
                 if isExtensionForm { return handleFormReturn(press) }
                 let screen = screen
                 guard command || option else {
@@ -536,28 +618,32 @@ struct RootPaletteView: View {
                 return screen.pasteKeepingWindowOpen(at: selection) ? .handled : .ignored
             }
             .onKeyPress(.escape) {
-                if menuPanel.isClosing { return .handled }
                 // An open control list owns Escape before the palette beneath it.
                 if vm.isControlListOpen { return .ignored }
+                if vm.isComposing, !menuOpen { return .ignored }
                 switch PaletteEscapeAction.resolve(
                     menuOpen: menuOpen, menuQuery: vm.menuQuery,
                     argumentFocused: argumentFocused != nil, query: vm.query, mode: vm.mode,
                     canGoBack: vm.canGoBack,
-                    behavior: settings.escapeKeyBehavior)
+                    behavior: settings.escapeKeyBehavior,
+                    compactRootExpanded: settings.compactMode && vm.mode == .launcher && !isCollapsed)
                 {
                 case .clearMenuQuery, .closeMenu:
                     escapeMenu()
                 case .leaveArgumentField:
                     returnFocusToSearchField()
                 case .clearQuery:
+                    if settings.compactMode, vm.mode == .launcher { vm.forceExpanded = true }
                     vm.query = ""
                 case .exitExtensionScreen:
                     core.extensionCoordinator.exitExtensionScreen()
                 case .goBack:
                     goBack()
+                case .collapsePalette:
+                    vm.forceExpanded = false
+                    resetCompactSelection()
                 case .hidePalette:
                     core.paletteCoordinator.hidePalette()
-                    // This behavior promises a root search on reopen, whatever the delay says.
                     if settings.escapeKeyBehavior == .closeAndPopToRoot {
                         core.paletteCoordinator.popToRootNow()
                     }
@@ -566,15 +652,15 @@ struct RootPaletteView: View {
             }
             .onKeyPress(keys: [.tab], phases: .down) { press in
                 // ⇥ inside an open list belongs to the list, not to the form's field order.
-                if vm.isControlListOpen { return .handled }
-                if !menuOpen { advanceTabFocus(backwards: press.modifiers.contains(.shift)) }
+                if vm.isControlListOpen || menuOpen { return .handled }
+                if vm.isComposing { return .ignored }
+                advanceTabFocus(backwards: press.modifiers.contains(.shift))
                 return .handled
             }
             .modifier(
                 ExtensionShortcutKeys(
-                    screen: menuOpen ? nil : screen as? ExtensionCommandScreen, selection: sel)
+                    screen: { menuOpen ? nil : screen as? ExtensionCommandScreen }, selection: sel)
             )
-            // ⌘K toggles the actions panel for the current selection.
             .onKeyPress(phases: .down) { press in
                 guard press.modifiers.contains(.command),
                     ASCIIKeyboardLayout.matches(press.key, character: "k")
@@ -585,9 +671,9 @@ struct RootPaletteView: View {
                 guard !isCollapsed else { return .handled }
                 let screen = screen
                 guard !screen.rows.isEmpty || screen.actsWithoutRows else { return .handled }
-                // An error calc card is the selection but has no actions — don't open an empty panel.
+                // An error calc card has no actions, so don't open an empty panel.
                 guard screen.hasPrimaryAction(at: selection(in: screen)) else { return .handled }
-                // Same for a menu the footer doesn't offer: ⌘K opens exactly what the bar advertises.
+                // ⌘K opens exactly what the footer advertises, never a menu it doesn't offer.
                 guard screen.hasActions(at: selection(in: screen)) else { return .handled }
                 toggleActions()
                 return .handled
@@ -620,10 +706,10 @@ struct RootPaletteView: View {
             }
     }
 
-    /// A thin strip along the top edge for grabbing the window; the Appearance setting gates it.
     private var topDragStrip: some View {
         Color.clear
-            .frame(height: metrics.size.headerPadding)
+            // Compact, it stops at the capsule, so a button keeps its whole press.
+            .frame(width: compactCapsuleWidth, height: metrics.size.headerPadding)
             .windowDraggable(settings.paletteDraggable, onBegan: beginDrag, onEnded: endDrag)
     }
 
@@ -644,6 +730,63 @@ struct RootPaletteView: View {
     }
 
     private var header: some View {
+        headerBar
+            // The field stops where the capsule will, so it never runs under a button.
+            .frame(width: compactCapsuleWidth)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // Behind the row, which a glass container would otherwise paint over.
+            .background(alignment: .topLeading) {
+                if isCollapsed {
+                    CompactBar(
+                        commands: compactCommands, selection: compactSelection.command,
+                        onRun: runCompactCommand, onSettled: { hostWindow?.invalidateShadow() })
+                }
+            }
+            // Next turn, once the show's `land()` and search refocus are done, so neither undoes it.
+            .onChange(of: vm.pendingArgumentEntryID) {
+                Task { @MainActor in focusPendingArgument() }
+            }
+            .onChange(of: argumentFocused) { _, field in vm.noteEditingField(field != nil) }
+            .onChange(of: quickAI.pendingAttachments.map(\.id)) { refreshAttachmentsMenu() }
+    }
+
+    private var compactCommands: [CommandID] {
+        settings.compactBarCommands.filter(appIndex.isCommandEnabled)
+    }
+
+    private func resetCompactSelection() {
+        compactSelection.command = nil
+    }
+
+    private func moveCompactSelection(_ step: Int, modifiers: EventModifiers = []) -> Bool {
+        guard isCollapsed, vm.query.isEmpty, !vm.isComposing, !menuOpen,
+            !vm.isControlListOpen,
+            modifiers.isDisjoint(with: [.command, .control, .option, .shift])
+        else { return false }
+        compactSelection.move(by: step, commands: compactCommands)
+        return true
+    }
+
+    private func activateCompactSelection() {
+        guard let command = compactSelection.command else { return }
+        runCompactCommand(command)
+    }
+
+    private func runCompactCommand(_ command: CommandID) {
+        guard isCollapsed, vm.isVisible, compactCommands.contains(command) else { return }
+        withTransaction(\.disablesAnimations, true) {
+            core.launcherCoordinator.runCommand(command)
+        }
+    }
+
+    /// Where the compact capsule ends beside its buttons; nil while expanded.
+    private var compactCapsuleWidth: CGFloat? {
+        guard isCollapsed else { return nil }
+        return CompactBarGeometry(metrics: metrics, count: compactCommands.count)
+            .capsuleWidth(revealed: true)
+    }
+
+    private var headerBar: some View {
         HStack(alignment: .center, spacing: 0) {
             // Matches the list rows and section headers' own indent below.
             headerGutter(width: metrics.spacing.md * 2)
@@ -662,6 +805,7 @@ struct RootPaletteView: View {
             headerGutter(width: metrics.spacing.xl)
             // One structural position: a field inside a branch loses first responder when it flips.
             headerField
+                .simultaneousGesture(TapGesture().onEnded { resetCompactSelection() })
             if let accessory = headerAccessory {
                 accessory.view
                 // Given room last: at the default priority it would split it with the field.
@@ -671,7 +815,6 @@ struct RootPaletteView: View {
                 headerGutter(width: metrics.spacing.md)
                 quickAITabHint
             }
-            // Keyed off the mode, which says which screen is up; the field just flexes narrower.
             if !isCollapsed, vm.mode == .clipboard {
                 headerGutter(width: metrics.spacing.md)
                 ClipboardFilterButton(
@@ -682,7 +825,8 @@ struct RootPaletteView: View {
                 headerGutter(width: metrics.spacing.md)
                 HeaderMenuButton(
                     title: vm.fileSearchFilter.title, systemImage: vm.fileSearchFilter.systemImage,
-                    isOpen: openMenu == .fileSearchFilter, help: "Filter by type  ⌘P",
+                    isOpen: openMenu == .fileSearchFilter,
+                    help: String(localized: "Filter by type  ⌘P"),
                     action: toggleFileSearchFilter)
             }
             if !isCollapsed, vm.mode == .emoji {
@@ -691,8 +835,16 @@ struct RootPaletteView: View {
                     title: vm.emojiCategoryFilter.title,
                     systemImage: vm.emojiCategoryFilter.systemImage,
                     isOpen: openMenu == .emojiCategory,
-                    help: "Filter by category  ⌘P",
+                    help: String(localized: "Filter by category  ⌘P"),
                     action: toggleEmojiCategory)
+            }
+            if !isCollapsed, vm.mode == .dictionary, dictionary.hasThesaurus {
+                headerGutter(width: metrics.spacing.md)
+                HeaderMenuButton(
+                    title: dictionary.scope.title, systemImage: dictionary.scope.systemImage,
+                    isOpen: openMenu == .dictionaryScope,
+                    help: String(localized: "Dictionary or thesaurus  ⌘P"),
+                    action: toggleDictionaryScope)
             }
             if !isCollapsed, vm.mode == .ai {
                 headerGutter(width: metrics.spacing.md)
@@ -709,21 +861,6 @@ struct RootPaletteView: View {
                         action: toggleAIReasoning)
                 }
             }
-            // Compact pins favorites beside the field; expanded shows them as rows.
-            if isCollapsed, settings.showFavoritesInCompactMode,
-                let launcher = screen as? LauncherScreen
-            {
-                let favorites = launcher.compactFavorites
-                if !favorites.isEmpty {
-                    headerGutter(width: metrics.spacing.md)
-                    CompactFavoritesRow(
-                        favorites: favorites,
-                        showsOverflow: launcher.hasUnshownFavorites,
-                        onLaunch: { core.launcherCoordinator.launch($0) },
-                        onOverflow: { core.paletteCoordinator.expandFromCompact() }
-                    )
-                }
-            }
             if !isCollapsed, let command = extensionCommandScreen,
                 let accessory = command.searchAccessory
             {
@@ -732,16 +869,15 @@ struct RootPaletteView: View {
                     accessory, isOpen: openMenu == .extensionAccessory,
                     action: toggleExtensionSearchAccessory)
             }
-            headerGutter(width: metrics.spacing.md * 2)
+            if isCollapsed { UpdatePill() }
+            // The slack above and below, so the pill stays concentric with the capsule.
+            headerGutter(width: isCollapsed ? metrics.size.headerPadding : metrics.spacing.md * 2)
         }
         // Identical metrics in both states, so typing can't move the search bar.
         .frame(height: metrics.size.headerHeight)
         .padding(.top, metrics.size.headerPadding)
+        .padding(.bottom, isCollapsed ? metrics.size.headerPadding : 0)
         .frame(maxWidth: .infinity)
-        // Set after the show, so the field it names is focused rather than the search field.
-        .onChange(of: vm.pendingArgumentEntryID) { focusPendingArgument() }
-        .onChange(of: argumentFocused) { _, field in vm.noteEditingField(field != nil) }
-        .onChange(of: quickAI.pendingAttachments.map(\.id)) { refreshAttachmentsMenu() }
     }
 
     /// Mode-gated ahead of the cast, which would otherwise cost every other mode a list build.
@@ -765,9 +901,10 @@ struct RootPaletteView: View {
                     .font(metrics.typography.bar)
                     .foregroundStyle(Theme.Colors.textSecondary)
                 KeyCapChip(text: "⇥", style: .outline)
+                    .accessibilityHidden(true)
             }
         }
-        .help("Ask Quick AI what you typed  ⇥")
+        .help("Press Tab to ask Quick AI")
     }
 
     /// Resolved through `PaletteTabAction`, so the hint cannot promise the wrong destination.
@@ -778,7 +915,6 @@ struct RootPaletteView: View {
             clipboardEnabled: settings.clipboardEnabled) == .ask
     }
 
-    /// True when the screen took the keyboard over, which leaves the header empty beside the chevron.
     private var hidesSearchField: Bool { !isCollapsed && screen.hidesSearchField }
 
     /// The field, kept mounted and hidden rather than swapped: a branch would tear its editor down.
@@ -805,8 +941,7 @@ struct RootPaletteView: View {
         searchFieldWidth.map { min($0, metrics.size.searchFieldMinWidth) }
     }
 
-    /// The field's own text, floored for the caret and capped so the strip stays on screen.
-    /// Empty, that is the prompt where one is drawn — which is what seats the strip right after it.
+    /// Capped to keep the strip on screen; empty, it measures the prompt so the strip follows it.
     private func searchFieldWidth(for accessory: PaletteHeaderAccessory) -> CGFloat {
         let font = metrics.typography.searchFieldNSFont
         let text = vm.query.isEmpty ? searchPrompt : vm.query
@@ -822,7 +957,6 @@ struct RootPaletteView: View {
     private var searchPrompt: String {
         // Squeezed to the caret, the field has no room for a prompt; beside one it keeps it.
         if headerAccessory?.placement == .afterQuery, vm.mode != .ai { return "" }
-        // Inside a running command the search bar belongs to the extension.
         if vm.mode == .extensionCommand, let placeholder = extensionScreen.searchPlaceholder {
             return placeholder
         }
@@ -878,15 +1012,20 @@ struct RootPaletteView: View {
     }
 
     private func bottomBar(
-        pillLabel: String, showActionGroup: Bool, formPrimaryShortcut: Bool, showActions: Bool
+        pillLabel: String, showActionGroup: Bool, formPrimaryShortcut: Bool,
+        primaryActionEnabled: Bool, showActions: Bool
     ) -> some View {
         // Floating controls, no bar; the edge dissolve ghosts the rows passing beneath.
         HStack(spacing: 0) {
-            appMenuButton
-                .modifier(ExtensionToastSlot(extensions: extensions, showing: vm.mode == .extensionCommand))
+            HStack(spacing: 0) {
+                appMenuButton
+                UpdatePill()
+            }
+            .modifier(ExtensionToastSlot(extensions: extensions, showing: vm.mode == .extensionCommand))
             if showActionGroup {
                 actionGroup(
                     pillLabel: pillLabel, formPrimaryShortcut: formPrimaryShortcut,
+                    primaryActionEnabled: primaryActionEnabled,
                     showActions: showActions
                 )
                 .fixedSize()
@@ -903,9 +1042,8 @@ struct RootPaletteView: View {
         }
     }
 
-    /// The footer control group: primary action and the Actions toggle sharing one glass capsule.
     private func actionGroup(
-        pillLabel: String, formPrimaryShortcut: Bool, showActions: Bool
+        pillLabel: String, formPrimaryShortcut: Bool, primaryActionEnabled: Bool, showActions: Bool
     ) -> some View {
         HStack(spacing: 2) {
             BarButton(action: activateSelection) {
@@ -923,6 +1061,7 @@ struct RootPaletteView: View {
                     }
                 }
             }
+            .disabled(!primaryActionEnabled)
             if showActions {
                 BarButton(action: toggleActions) {
                     HStack(spacing: metrics.spacing.sm) {
@@ -984,6 +1123,7 @@ struct RootPaletteView: View {
         case .clipboardFilter: toggleClipboardFilter()
         case .fileSearchFilter: toggleFileSearchFilter()
         case .emojiCategory: toggleEmojiCategory()
+        case .dictionaryScope: toggleDictionaryScope()
         case .aiModel: toggleAIModel()
         case .ignored: return false
         }
@@ -999,7 +1139,16 @@ struct RootPaletteView: View {
         open(.emojiCategory, highlighting: active)
     }
 
-    /// Opens on the choice the dropdown holds, exactly as the clipboard filter opens on its own.
+    private func toggleDictionaryScope() {
+        if openMenu == .dictionaryScope {
+            closeMenus()
+            return
+        }
+        guard dictionary.hasThesaurus else { return }
+        let active = DictionaryScope.allCases.firstIndex(of: dictionary.scope) ?? 0
+        open(.dictionaryScope, highlighting: active)
+    }
+
     private func toggleExtensionSearchAccessory() {
         if openMenu == .extensionAccessory {
             closeMenus()
@@ -1010,7 +1159,6 @@ struct RootPaletteView: View {
         open(.extensionAccessory, highlighting: accessory.index(of: value))
     }
 
-    /// Opens on the selected model, mirroring the clipboard filter's active-row behavior.
     private func toggleAIModel() {
         if openMenu == .aiModel {
             closeMenus()
@@ -1053,13 +1201,14 @@ struct RootPaletteView: View {
 
     /// Every header menu states its own width, so resizing one never moves another.
     private func headerMenu(
-        _ popover: PopoverMenuContent, width: CGFloat
+        _ popover: PopoverMenuContent, width: CGFloat, extraRowsHeight: CGFloat = 0
     ) -> PaletteMenuContent {
         let filtered = popover.matching(ActionMenuSearchQuery(vm.menuQuery))
         return PaletteMenuContent(
             popover: filtered.content, selection: $menuSelection, width: width,
-            search: PopoverMenu.Search(placeholder: "Search…", placement: .top),
-            onActivate: activateMenuItem, preferredSelection: filtered.bestMatch)
+            search: PopoverMenu.Search(placeholder: String(localized: "Search…"), placement: .top),
+            onActivate: activateMenuItem, preferredSelection: filtered.bestMatch,
+            extraRowsHeight: extraRowsHeight)
     }
 
     /// Every open path lands here, so the highlight is always stated rather than left behind.
@@ -1073,11 +1222,20 @@ struct RootPaletteView: View {
 
     private func closeMenus() {
         menuPanel.hide()
+        if menuOpen { searchFocused = !screen.hidesSearchField }
         openMenu = nil
         argumentOptionsField = nil
+        inputOptions = nil
         vm.menuQuery = ""
         // Stated here rather than mirrored later: the window delegate reads it during this turn.
         vm.menuOpen = false
+    }
+
+    private func openInputOptions(
+        _ content: PopoverMenuContent, corner: MenuPanelCorner, selection: Int
+    ) {
+        inputOptions = content
+        open(.inputOptions(corner), highlighting: selection)
     }
 
     private func menuQueryChanged() {
@@ -1085,14 +1243,10 @@ struct RootPaletteView: View {
         let next =
             content.preferredSelection
             ?? (0..<content.rowCount).first(where: content.isSelectable) ?? 0
-        guard next == menuSelection else {
-            menuSelection = next
-            return
-        }
+        if next != menuSelection { menuSelection = next }
         syncMenuPanel(presenting: false)
     }
 
-    /// Drives the menu's window from the two pieces of state that decide what it shows.
     private func syncMenuPanel(presenting: Bool) {
         guard let content = menuContent, let corner = menuCorner else {
             menuPanel.hide()
@@ -1102,12 +1256,9 @@ struct RootPaletteView: View {
         if presenting, let hostWindow {
             menuPanel.show(
                 view, corner: corner, parent: hostWindow, core: core,
-                clipPath: content.clipPath, motion: content.motion,
                 onKeyDown: handleMenuPanelKey, onDismiss: closeMenus)
         } else {
-            menuPanel.update(
-                view, corner: corner, core: core, clipPath: content.clipPath,
-                motion: content.motion)
+            menuPanel.update(view, corner: corner, core: core)
         }
     }
 
@@ -1116,6 +1267,11 @@ struct RootPaletteView: View {
         let navigationModifiers = modifiers.intersection([.command, .control, .option, .shift])
         if event.charactersIgnoringModifiers == "\u{1B}" {
             escapeMenu()
+            return true
+        }
+        if vm.mode.isNativeEditor,
+            (hostWindow as? PalettePanel)?.onCommandShortcut?(event) == true
+        {
             return true
         }
         switch event.specialKey {
@@ -1129,6 +1285,11 @@ struct RootPaletteView: View {
             let screen = screen
             let selection = selection(in: screen)
             if modifiers.contains([.command, .control]), screen.tertiary(at: selection) { return true }
+            if modifiers.contains([.command, .shift]),
+                screen.perform(.copyCalculation, at: selection)
+            {
+                return true
+            }
             if modifiers.contains(.command) { return screen.secondary(at: selection) }
             if modifiers.contains(.option) {
                 return screen.pasteKeepingWindowOpen(at: selection)
@@ -1212,7 +1373,9 @@ struct RootPaletteView: View {
         case .app: .bottomLeading
         case .actions: .bottomTrailing
         case .argumentOptions: .belowHeaderTrailing
-        case .clipboardFilter, .fileSearchFilter, .emojiCategory, .aiModel, .aiReasoning,
+        case .inputOptions(let corner): corner
+        case .clipboardFilter, .fileSearchFilter, .emojiCategory, .dictionaryScope, .aiModel,
+            .aiReasoning,
             .aiAttachments, .extensionAccessory:
             .belowHeaderTrailing
         case nil: nil
@@ -1222,10 +1385,11 @@ struct RootPaletteView: View {
     // MARK: - Actions
 
     /// Every reset lands here, so handlers that fire together agree in whatever order they run.
-    private func land() {
-        let landing = screen.landingSelection
+    private func land(restoringSelection: Bool = false) {
+        let restored = restoringSelection ? vm.restoredSelection : nil
+        let landing = restored.map { min($0, max(screen.rows.count - 1, 0)) } ?? screen.landingSelection
         vm.selection = landing
-        scroll = ScrollIntent(kind: landing == 0 ? .top : .center)
+        scroll = ScrollIntent(kind: restored != nil ? .follow : landing == 0 ? .top : .center)
     }
 
     private func move(_ delta: Int, in screen: any PaletteScreen) {
@@ -1235,7 +1399,6 @@ struct RootPaletteView: View {
         scroll = ScrollIntent(kind: .follow)
     }
 
-    /// ↑/↓: the screen's own move where it has one, else a linear step through the rows.
     private func moveVertically(_ delta: Int) -> KeyPress.Result {
         let screen = screen
         // A control editing with ↑/↓ keeps them; only ⇥ leaves it.
@@ -1278,7 +1441,6 @@ struct RootPaletteView: View {
         return .handled
     }
 
-    /// Move the open menu's highlight past rows it cannot land on, stopping at the ends (no wrap).
     private func moveMenu(_ delta: Int) {
         guard let content = menuContent else { return }
         var row = menuSelection + delta
@@ -1291,14 +1453,13 @@ struct RootPaletteView: View {
         }
     }
 
-    /// The one activation path for a menu row: run its action, then close.
     private func activateMenuItem(_ index: Int) {
         guard let content = menuContent, (0..<content.rowCount).contains(index) else { return }
         guard content.isSelectable(index) else { return }
-        // Before the action: one opening a window must find the palette key again, or nothing hides it.
+        // Close first: an action opening a window must find the palette key, or nothing hides it.
         closeMenus()
         // A mouse click on a row takes the caret with it; menus close back into the field.
-        if argumentFocused == nil { searchFocused = true }
+        if argumentFocused == nil, !vm.mode.isNativeEditor { searchFocused = true }
         content.activate(index)
     }
 
@@ -1323,7 +1484,6 @@ struct RootPaletteView: View {
         }
     }
 
-    /// Tab walks a screen's own fields first, then the inline arguments, then rings the modes.
     private func advanceTabFocus(backwards: Bool) {
         let screen = screen
         if screen.tab(at: selection(in: screen), backwards: backwards) { return }
@@ -1345,6 +1505,9 @@ struct RootPaletteView: View {
     private func installHeaderArrowHandler(in window: NSWindow?) {
         guard let panel = window as? PalettePanel else { return }
         panel.onHeaderFieldBoundaryArrow = { boundary in
+            if isCollapsed {
+                return moveCompactSelection(boundary == .leading ? -1 : 1)
+            }
             guard !menuOpen, !vm.isControlListOpen, !isCollapsed,
                 let accessory = headerAccessory, !accessory.fieldNames.isEmpty
             else { return false }
@@ -1392,11 +1555,28 @@ struct RootPaletteView: View {
 
     /// Never promises a step the click does not take: a root screen closes rather than backs.
     private var backHelp: String {
-        let escape = hasBackStep ? "Esc to go back" : "Esc to close"
-        return "\(escape) or ⌘ Esc to go to root search"
+        hasBackStep
+            ? String(localized: "Esc to go back or ⌘ Esc to go to root search")
+            : String(localized: "Esc to close or ⌘ Esc to go to root search")
     }
 
     private func goBack() {
+        if vm.mode == .customCommandEditor {
+            core.customCommandCoordinator.cancelCustomCommandEditing()
+            return
+        }
+        if vm.mode == .eventEditor {
+            core.calendarCoordinator.cancelEventEditing()
+            return
+        }
+        if vm.mode == .quicklinkEditor {
+            core.quicklinkCoordinator.cancelQuicklinkEditing()
+            return
+        }
+        if vm.mode == .snippetEditor {
+            core.snippetCoordinator.cancelSnippetEditing()
+            return
+        }
         if vm.mode == .extensionCommand {
             core.extensionCoordinator.exitExtensionScreen()
             return
@@ -1405,7 +1585,6 @@ struct RootPaletteView: View {
     }
 
     private func activateSelection() {
-        // Nothing is visibly selected when collapsed, so launch via ⌘1–⌘5 or typing.
         guard !isCollapsed else { return }
         // An unfilled field blocks the launch; focus it instead of acting on a half-typed row.
         if let incomplete = headerAccessory?.firstIncompleteField {
@@ -1420,15 +1599,16 @@ struct RootPaletteView: View {
 }
 
 /// The palette's in-window menus. One optional of these is the whole "only one is open" invariant.
-private enum OpenMenu {
+private enum OpenMenu: Equatable {
     case actions
     case extensionAccessory
-    /// An `options=` argument field's choices, hung under the header where the chip sits.
     case argumentOptions
+    case inputOptions(MenuPanelCorner)
     case app
     case clipboardFilter
     case fileSearchFilter
     case emojiCategory
+    case dictionaryScope
     case aiModel
     case aiReasoning
     case aiAttachments

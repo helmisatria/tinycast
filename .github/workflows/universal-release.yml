@@ -19,7 +19,7 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
       DISPLAY_NAME: Tinycast
-      BUNDLE_ID: com.tinycast.app
+      BUNDLE_ID: com.abueammar.tinycast
     steps:
       - uses: actions/checkout@v7
 

@@ -1,12 +1,12 @@
 import AppKit
 import Foundation
 
-/// What the palette is showing for the running command.
 enum ExtensionSessionState: Equatable {
     case idle
     case launching
     case rendered(RenderTree)
     case failed(String)
+    case needsPreferences(String)
     /// A no-view command that ran to completion.
     case finished
 }
@@ -21,8 +21,9 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
     private(set) var updating: Set<String> = []
     private(set) var menuBars: ExtensionMenuBarManager?
     private(set) var state: ExtensionSessionState = .idle
-    /// The command whose session is live, if any.
     private(set) var running: ExtensionCommandRef?
+    /// The command waits on a browser sign-in; resetting the palette now would end it.
+    var isSigningIn: Bool { bridge.isSigningIn }
     /// Toasts the running command asked for, newest last.
     private(set) var toasts: [ExtensionToast] = []
     /// Depth of the extension's own navigation stack; >1 means Escape should pop rather than close.
@@ -35,8 +36,6 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
     /// Whether the commands reach the launcher at all; independent of `isEnabled`.
     private(set) var showsInLauncher = true
 
-    var isAuthorizing: Bool { oauthSession.isAuthorizing }
-
     let storage: ExtensionStorage
     /// Extension-scoped state the launcher and Settings read through here, like `storage`.
     let appearances = ExtensionAppearanceStore()
@@ -45,7 +44,6 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
     private let storeVersions = ExtensionVersionStore(fileURL: ExtensionCatalog.storeVersionsFile())
     @ObservationIgnored private let runtime: ExtensionRuntime
     @ObservationIgnored private let bridge: ExtensionHostBridge
-    @ObservationIgnored private let oauthSession = ExtensionOAuthSession()
     @ObservationIgnored private weak var appIndex: AppIndex?
     @ObservationIgnored private weak var coordinator: ExtensionCoordinator?
 
@@ -59,7 +57,7 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
     @ObservationIgnored private var backgroundFailure: String?
     @ObservationIgnored private var backgroundTask: Task<Void, Never>?
     @ObservationIgnored private var nextToastID = 1
-    @ObservationIgnored private var lastOAuthExtensionName: String?
+    @ObservationIgnored private var searchState = ExtensionSearchState()
 
     init(clipboardStore: ClipboardStore) {
         storage = ExtensionStorage(directory: ExtensionCatalog.storageDirectory())
@@ -110,7 +108,6 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
                             hostAPI: bridge,
                             priority: type == .background ? .utility : .userInitiated),
                         stop: {
-                            host.stop()
                             bridge.context = nil
                         }, enableInteraction: { host.enableInteraction() })
                 },
@@ -200,7 +197,6 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
         publishLauncherEntries()
     }
 
-    /// An appearance wins, else the shipped artwork; the launcher gets the answer.
     private func icon(
         for command: ExtensionCommand, in owner: InstalledExtension,
         appearance: ExtensionAppearance?
@@ -350,7 +346,6 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
                 extensionName: installedExtension.manifest.name, commandName: $0.name
             ).entryID
         }
-        ExtensionOAuthKeychain.removeAllTokens(extensionName: installedExtension.manifest.name)
         try? ExtensionCatalog.uninstall(installedExtension)
         storage.removeAll(extension: installedExtension.manifest.name)
         commandMetadata.removeAll(extension: installedExtension.manifest.name)
@@ -362,7 +357,6 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
 
     // MARK: - Running a command
 
-    /// Resolve a launcher row to a command, or nil when the row isn't an extension command.
     func resolve(_ entry: AppEntry) -> (InstalledExtension, ExtensionCommand)? {
         guard let reference = ExtensionCommandRef(entryID: entry.id),
             let owner = extensionNamed(reference.extensionName),
@@ -412,7 +406,8 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
         guard missing.isEmpty else {
             running = ExtensionCommandRef(
                 extensionName: owner.manifest.name, commandName: command.name)
-            state = .failed(ExtensionLaunchError.missingPreferences(missing).localizedDescription)
+            state = .needsPreferences(
+                ExtensionLaunchError.missingPreferences(missing).localizedDescription)
             return
         }
         guard let bundle = owner.bundleURL(for: command) else {
@@ -484,6 +479,7 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
             preferences: storage.resolvedPreferences(
                 extension: owner.manifest.name, schemas: schemas),
             caches: storage.caches(extension: owner.manifest.name),
+            formValues: storage.formValues(extension: owner.manifest.name, command: command.name),
             arguments: command.completeArguments(arguments),
             fallbackText: fallbackText,
             launchType: launchType,
@@ -492,7 +488,6 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
     }
 
     func stop() async {
-        oauthSession.cancel()
         guard let sessionID else {
             resetSessionState()
             return
@@ -511,6 +506,7 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
         toasts = []
         navigationDepth = 1
         accessoryValues = [:]
+        searchState = ExtensionSearchState()
     }
 
     // MARK: - Background refresh
@@ -544,7 +540,6 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
         menuBars?.run(owner, command: command)
     }
 
-    /// Whether the Actions menu can offer refresh controls for this row.
     func isBackgroundSchedulable(for entry: AppEntry) -> Bool {
         guard let (_, command) = resolve(entry) else { return false }
         return ExtensionRefreshPolicy.isSchedulable(mode: command.mode, interval: command.interval)
@@ -570,9 +565,18 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
     /// One headless run right now, without touching the enable flag or the palette.
     func refreshNow(_ entry: AppEntry) {
         guard let (owner, command) = resolve(entry),
-            ExtensionRefreshPolicy.isSchedulable(mode: command.mode, interval: command.interval),
-            running == nil, backgroundSessionID == nil
+            ExtensionRefreshPolicy.isSchedulable(mode: command.mode, interval: command.interval)
         else { return }
+        let reference = ExtensionCommandRef(
+            extensionName: owner.manifest.name, commandName: command.name)
+        if let refusal = ExtensionRefreshPolicy.refreshNowRefusal(
+            foregroundRunning: running != nil,
+            refreshingCommand: backgroundRef?.entryID,
+            command: reference.entryID)
+        {
+            coordinator?.showHUD(refusal)
+            return
+        }
         Task { [weak self] in
             await self?.runInBackground(owner, command: command)
             self?.restartBackgroundLoop()
@@ -586,7 +590,6 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
         backgroundTask = Task { [weak self] in await self?.backgroundLoop() }
     }
 
-    /// Whether any installed command currently wants background ticks.
     private var hasEnabledBackgroundCommands: Bool {
         schedulableCommands().contains { owner, command in
             commandMetadata.metadata(extension: owner.manifest.name, command: command.name)
@@ -688,7 +691,8 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
             if extensionNamed(reference.extensionName) != nil {
                 commandMetadata.recordBackgroundResult(
                     extension: reference.extensionName, command: reference.commandName,
-                    success: succeeded, error: succeeded ? nil : (backgroundFailure ?? "Timed out."),
+                    success: succeeded,
+                    error: succeeded ? nil : (backgroundFailure ?? String(localized: "Timed out.")),
                     now: Date())
             }
             backgroundSessionID = nil
@@ -776,6 +780,14 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
         Task { await runtime.dispatch(session: sessionID, handler: handler, payload: payload) }
     }
 
+    func searchQueryChanged(to query: String) {
+        searchState.queryChanged(to: query)
+    }
+
+    func landingSelection(for query: String, rowCount: Int) -> Int {
+        searchState.landingSelection(for: query, rowCount: rowCount)
+    }
+
     // MARK: - Search-bar dropdowns
 
     /// What the dropdown shows: the extension's own `value` when it controls one, else the pick.
@@ -826,6 +838,11 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
 
     func runtime(_ runtime: ExtensionRuntime, session: String, didRender tree: RenderTree) {
         guard session == sessionID else { return }
+        if let current = coordinator?.extensionSearch,
+            let search = searchState.navigate(to: tree.depth, current: current)
+        {
+            coordinator?.showExtensionSearch(search, tree: tree)
+        }
         state = .rendered(tree)
         navigationDepth = tree.depth
         seedSearchBarAccessory(in: tree)
@@ -956,12 +973,12 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
             return
         }
         let panel = NSAlert()
-        panel.messageText = "Open With"
+        panel.messageText = String(localized: "Open With")
         panel.informativeText = target.lastPathComponent
         for candidate in candidates.prefix(4) {
             panel.addButton(withTitle: candidate.deletingPathExtension().lastPathComponent)
         }
-        panel.addButton(withTitle: "Cancel")
+        panel.addButton(withTitle: String(localized: "Cancel"))
         let response = panel.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
         guard response >= 0, response < min(candidates.count, 4) else { return }
         NSWorkspace.shared.open(
@@ -993,27 +1010,7 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
         }
         coordinator?.runExtensionCommand(
             entry(for: command, in: owner), arguments: link.arguments,
-            fallbackText: link.fallbackText, launchType: link.launchType)
-    }
-
-    func authorizeOAuth(options: ExtensionOAuthAuthorizeOptions) async throws -> ExtensionOAuthAuthorizeResult
-    {
-        lastOAuthExtensionName = running?.extensionName
-        return try await oauthSession.authorize(options: options)
-    }
-
-    func getOAuthTokens(providerId: String) -> String? {
-        guard let extName = running?.extensionName ?? lastOAuthExtensionName else { return nil }
-        return ExtensionOAuthKeychain.getTokens(extensionName: extName, providerId: providerId)
-    }
-
-    func setOAuthTokens(providerId: String, tokens: String) {
-        guard let extName = running?.extensionName ?? lastOAuthExtensionName else { return }
-        ExtensionOAuthKeychain.setTokens(tokens, extensionName: extName, providerId: providerId)
-    }
-
-    func removeOAuthTokens(providerId: String) {
-        guard let extName = running?.extensionName ?? lastOAuthExtensionName else { return }
-        ExtensionOAuthKeychain.removeTokens(extensionName: extName, providerId: providerId)
+            fallbackText: link.fallbackText, launchType: link.launchType,
+            launchContext: link.launchContext)
     }
 }

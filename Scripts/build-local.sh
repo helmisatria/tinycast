@@ -7,8 +7,8 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Develope
 CONFIGURATION="${1:-Debug}"
 ACTION="${2:-}"
 case "$CONFIGURATION" in
-    Debug) NAME="Tinycast Dev"; BUNDLE_ID="com.tinycast.app.dev" ;;
-    Release) NAME="Tinycast"; BUNDLE_ID="com.tinycast.app" ;;
+    Debug) NAME="Tinycast Dev"; BUNDLE_ID="com.abueammar.tinycast.dev"; LEGACY_ID="com.tinycast.app.dev" ;;
+    Release) NAME="Tinycast"; BUNDLE_ID="com.abueammar.tinycast"; LEGACY_ID="com.tinycast.app" ;;
     *) echo "usage: build-local.sh [Debug|Release] [--install]" >&2; exit 2 ;;
 esac
 if [ "$#" -gt 2 ] || { [ -n "$ACTION" ] && [ "$ACTION" != --install ]; }; then
@@ -31,7 +31,7 @@ fi
 xcodebuild "${BUILD_ARGUMENTS[@]}" build
 ./Scripts/verify-local-signature.sh "$APP"
 if [ "$CONFIGURATION" = Release ]; then
-    ./Scripts/verify-signature.sh "$APP"
+    TINYCAST_DEVELOPMENT_SIGNING=1 ./Scripts/verify-signature.sh "$APP"
 fi
 if [ "$ACTION" != --install ]; then
     exit 0
@@ -42,12 +42,14 @@ STAGE="$(mktemp -d /Applications/.tinycast-install.XXXXXX)"
 trap 'rm -rf "$STAGE"' EXIT
 ditto "$APP" "$STAGE/$NAME.app"
 ./Scripts/verify-local-signature.sh "$STAGE/$NAME.app" "$DESTINATION"
-osascript - "$BUNDLE_ID" <<'APPLESCRIPT'
+# The legacy id too: the installed copy may predate the bundle id move.
+osascript - "$BUNDLE_ID" "$LEGACY_ID" <<'APPLESCRIPT'
 on run arguments
-    set bundleID to item 1 of arguments
-    if application id bundleID is running then
-        tell application id bundleID to quit
-    end if
+    repeat with bundleID in arguments
+        if application id bundleID is running then
+            tell application id bundleID to quit
+        end if
+    end repeat
 end run
 APPLESCRIPT
 for ATTEMPT in {1..20}; do

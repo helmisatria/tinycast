@@ -32,7 +32,7 @@ generated and not committed.
 | ------------------ | ---------------------------------------------------------------------- |
 | `src/app/`         | Routes. `page.tsx` is the marketing page; `docs/` is the documentation |
 | `src/lib/`         | Build-time GitHub reads: the version, stars and the stable changelog   |
-| `worker/`          | The Worker behind `/support`'s API                                     |
+| `worker/`          | The Worker behind `/support`'s API and the app's exchange rates        |
 | `src/components/`  | Page sections, with shared primitives in `ui/`                         |
 | `src/data/`        | All copy and content, so components stay free of prose                 |
 | `src/index.css`    | **The only design-token source.** Colors, type scale, shadows          |
@@ -68,11 +68,25 @@ still renders, with checkout disabled. To try it against Polar's sandbox, copy `
 to `.dev.vars` (gitignored), fill it in, and run `npm run preview` (http://localhost:8787).
 `npm run check:worker` type-checks the Worker; its types are generated on install.
 
+The crypto addresses live in `src/data/support.ts`. Each one has a mark and a QR code in
+`public/wallets/`, and the root README shows the same codes. A code encodes its address verbatim,
+so changing an address means replacing its codes and scanning them before you commit.
+
+## Exchange rates
+
+`/api/v1/currencies` and `/api/v1/currencies/crypto?symbols=` serve the calculator's rates in the
+shape `CurrencyFeed` decodes. The Worker pulls exchange-api's daily USD snapshot from Cloudflare
+Pages, falling back to jsDelivr, and keeps it in the edge cache: an hour-old copy still answers at
+once while a fresh one loads, and the last good copy outlives an upstream outage by a week. The fiat
+list in `worker/currencies.ts` is the set `Scripts/gen-currencies.js` builds the app's table from.
+
 ## Media
 
-Files over 25 MiB cannot ship in `public/`. Put them in `media/` and reference them as
-`` `${site.cdn}/<name>` ``; they are uploaded on push. A new file extension also needs its content
-type added to `Scripts/upload-website-media.sh`.
+Videos and files over 25 MiB never enter git. Put them in `media/` (gitignored), run
+`npm run upload-media` to copy them to the R2 bucket behind `cdn.tinycast.dev`, and reference them
+as `` `${site.cdn}/<name>` ``. The bucket is the only copy, and the upload needs Cloudflare
+credentials (`wrangler login`). A new file extension also needs its content type added to
+`Scripts/upload-website-media.sh`.
 
 ## Deploy
 

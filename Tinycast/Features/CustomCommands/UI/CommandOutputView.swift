@@ -45,14 +45,13 @@ struct CommandOutputView: View {
         .padding(.bottom, Theme.Spacing.lg)
     }
 
-    /// One control for one job: Stop while it runs, Run Again once it has.
     private func actions(_ run: CommandRun) -> some View {
         HStack(spacing: Theme.Spacing.xs) {
             CopyLogButton(log: run.log)
             if run.isRunning {
-                iconButton("stop.fill", help: "Stop") { presenter.stopRunning() }
+                iconButton("stop.fill", help: String(localized: "Stop")) { presenter.stopRunning() }
             } else {
-                iconButton("arrow.clockwise", help: "Run Again") { presenter.runAgain() }
+                iconButton("arrow.clockwise", help: String(localized: "Run Again")) { presenter.runAgain() }
             }
         }
     }
@@ -71,18 +70,29 @@ struct CommandOutputView: View {
     // MARK: - Footer
 
     private func footer(_ run: CommandRun) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+            hint(run)
+            statusLine(run)
+        }
+        .font(.callout)
+        .foregroundStyle(Theme.Colors.textSecondary)
+        .padding(.horizontal, Theme.Spacing.xxl)
+        .padding(.vertical, Theme.Spacing.lg)
+    }
+
+    private func statusLine(_ run: CommandRun) -> some View {
         HStack(spacing: Theme.Spacing.sm) {
             Circle()
                 .fill(statusTint(run))
                 .frame(width: Self.statusDot, height: Self.statusDot)
             if let outcome = run.outcome {
                 Text(outcome.summary)
-                Text("·")
+                Text(verbatim: "·")
                     .foregroundStyle(Theme.Colors.textTertiary)
                 Text(CommandDuration.text(from: run.startedAt, to: outcome.finishedAt))
             } else {
                 Text("Running")
-                Text("·")
+                Text(verbatim: "·")
                     .foregroundStyle(Theme.Colors.textTertiary)
                 elapsed(from: run.startedAt)
             }
@@ -93,11 +103,6 @@ struct CommandOutputView: View {
                     .foregroundStyle(Theme.Colors.textTertiary)
             }
         }
-        .font(.callout)
-        .foregroundStyle(Theme.Colors.textSecondary)
-        .overlay(alignment: .topLeading) { hint(run) }
-        .padding(.horizontal, Theme.Spacing.xxl)
-        .padding(.vertical, Theme.Spacing.lg)
     }
 
     /// Ticks itself rather than being driven by a timer the window would have to own.
@@ -108,19 +113,16 @@ struct CommandOutputView: View {
         }
     }
 
-    /// Sits above the footer rather than in it: the nudge is a sentence, and the bar is a line.
     @ViewBuilder
     private func hint(_ run: CommandRun) -> some View {
         if let hint = run.outcome?.hint {
-            HStack(spacing: Theme.Spacing.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.sm) {
                 Text(hint)
+                    .fixedSize(horizontal: false, vertical: true)
                 Button("Open Settings") { presenter.showCommandSettings() }
                     .buttonStyle(.link)
+                    .fixedSize()
             }
-            .font(.callout)
-            .foregroundStyle(Theme.Colors.textSecondary)
-            .fixedSize()
-            .alignmentGuide(.top) { $0[.bottom] + Theme.Spacing.md }
         }
     }
 
@@ -133,7 +135,6 @@ struct CommandOutputView: View {
     }
 }
 
-/// Copies the whole log, then shows a checkmark long enough to be believed.
 private struct CopyLogButton: View {
     let log: String
     @State private var copiedAt: Date?
@@ -147,7 +148,7 @@ private struct CopyLogButton: View {
                 .font(Theme.Typography.bar)
                 .foregroundStyle(copiedAt == nil ? Theme.Colors.textSecondary : Theme.Colors.success)
         }
-        .tooltip("Copy Output")
+        .tooltip(String(localized: "Copy Output"))
         .task(id: copiedAt) {
             guard copiedAt != nil else { return }
             try? await Task.sleep(for: .seconds(Theme.Duration.copyFeedback))
@@ -156,13 +157,18 @@ private struct CopyLogButton: View {
     }
 }
 
-/// Elapsed time, in the one place a duration becomes text.
 enum CommandDuration {
     static func text(from start: Date, to end: Date) -> String {
         let seconds = max(0, end.timeIntervalSince(start))
-        if seconds < 10 { return String(format: "%.1fs", seconds) }
-        if seconds < 60 { return "\(Int(seconds))s" }
-        let whole = Int(seconds)
-        return "\(whole / 60)m \(whole % 60)s"
+        let duration = Duration.seconds(seconds)
+        if seconds < 10 {
+            return duration.formatted(
+                .units(allowed: [.seconds], width: .narrow, fractionalPart: .show(length: 1)))
+        }
+        let units: Set<Duration.UnitsFormatStyle.Unit> = seconds < 60 ? [.seconds] : [.minutes, .seconds]
+        return duration.formatted(
+            .units(
+                allowed: units, width: .narrow, zeroValueUnits: .show(length: 1),
+                fractionalPart: .hide(rounded: .down)))
     }
 }

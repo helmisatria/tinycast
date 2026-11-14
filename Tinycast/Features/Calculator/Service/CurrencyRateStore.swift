@@ -5,18 +5,18 @@ import Foundation
 @Observable
 final class CurrencyRateStore {
     private nonisolated static let fiatEndpoint = URL(
-        string: "https://backend.raycast.com/api/v1/currencies")!
+        string: "https://tinycast.dev/api/v1/currencies")!
     /// Asked for by the app's own crypto table, so the request and the table cannot drift apart.
     private nonisolated static let cryptoEndpoint = URL(
-        string: "https://backend.raycast.com/api/v1/currencies/crypto?symbols="
+        string: "https://tinycast.dev/api/v1/currencies/crypto?symbols="
             + CalcCurrency.cryptoCodes.joined(separator: ","))!
     /// Daily, measured from `completedAt`, so relaunching never re-fetches a snapshot still fresh.
     private static let refreshInterval: TimeInterval = 24 * 3600
     /// Shorter retry, so a machine offline at launch picks rates up soon after it reconnects.
     private static let retryInterval: TimeInterval = 30 * 60
 
-    /// The newest snapshot, nil until the first one lands.
     private(set) var rates: CurrencyRates?
+    private(set) var isRefreshing = false
 
     private let fileURL: URL
     @ObservationIgnored private var pump: Task<Void, Never>?
@@ -50,6 +50,17 @@ final class CurrencyRateStore {
         }
     }
 
+    /// The pump re-measures age from `completedAt` when it wakes, so its schedule needs no reset.
+    func refresh() {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        Task {
+            await fetchAndStore()
+            isRefreshing = false
+        }
+    }
+
+    @discardableResult
     private func fetchAndStore() async -> Bool {
         guard let result = await Self.fetch() else { return false }
         rates = result.rates

@@ -11,7 +11,6 @@ struct ExtensionPickerList: View {
     private var menuListInset: CGFloat { metrics.spacing.md }
     let items: [ExtensionPickerItem]
     let selection: Int
-    /// Values already chosen; a single-select picker passes the one it holds.
     let chosen: Set<String>
     let assetsPath: String?
     /// Fixed, never intrinsic, so the list cannot jitter as its rows change. A form's picker
@@ -22,6 +21,7 @@ struct ExtensionPickerList: View {
     /// Moves the highlight under the pointer, so mouse and keyboard share one selection.
     let onHighlight: (Int) -> Void
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: metrics.radius.menuPanel, style: .continuous)
         VStack(alignment: .leading, spacing: 0) {
             if let searchPlaceholder {
                 ExtensionMenuSearchField(
@@ -37,8 +37,8 @@ struct ExtensionPickerList: View {
                 .padding(searchPlaceholder == nil ? metrics.spacing.sm : 0)
         }
         .frame(width: width ?? form.controlWidth)
-        .frostedMenu(
-            in: RoundedRectangle(cornerRadius: metrics.radius.menuPanel, style: .continuous))
+        .frostedMenu(in: shape)
+        .clipShape(shape)
     }
 
     @ViewBuilder

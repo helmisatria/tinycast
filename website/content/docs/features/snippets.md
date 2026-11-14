@@ -10,10 +10,11 @@ expands in place.
 
 Turn snippets on in **Settings → Snippets**. They're **off** by default.
 
-| Setting          | Default |
-| ---------------- | ------- |
-| Enable snippets  | Off     |
-| Show in launcher | On      |
+| Setting          | Default   |
+| ---------------- | --------- |
+| Enable snippets  | Off       |
+| Show in launcher | On        |
+| Default action   | **Paste** |
 
 **Turning on the switch also counts as consent to keyword matching.** There's no separate prompt.
 Tinycast first explains what keyword matching does, then asks for
@@ -30,28 +31,40 @@ turn on keystroke listening.
 
 ## Commands
 
-| Command         | Does                                |
-| --------------- | ----------------------------------- |
-| Search Snippets | Opens the snippet browser           |
-| Create Snippet  | Opens the editor with a new snippet |
+| Command         | Does                                                                          |
+| --------------- | ----------------------------------------------------------------------------- |
+| Search Snippets | Opens the snippet browser                                                     |
+| Create Snippet  | Opens the editor with a new snippet, starting from the text you have selected |
 
 You can give both a global shortcut and an alias in **Settings → Snippets**.
 
 ## The snippet browser
 
 **Search Snippets** lists every enabled snippet with a preview next to it. Type to filter by name or
-keyword.
+keyword. Pinned snippets come first, under their own **Pinned** heading.
 
 The preview shows the **template as written**, with its placeholders, along with the name, keyword,
 shortcut, file name and character count. The preview never fills in placeholders, so browsing never
 reads your clipboard or asks for an argument.
 
-| Action (<kbd>⌘</kbd><kbd>K</kbd>) | Shortcut          |
-| --------------------------------- | ----------------- |
-| Paste Snippet                     | <kbd>return</kbd> |
-| Edit Snippet                      |                   |
-| Create Snippet                    |                   |
-| Show in Finder                    |                   |
+| Action (<kbd>⌘</kbd><kbd>K</kbd>) | Shortcut                      |
+| --------------------------------- | ----------------------------- |
+| Paste Snippet                     | <kbd>return</kbd>             |
+| Copy Snippet                      | <kbd>⌘</kbd><kbd>return</kbd> |
+| Edit Snippet                      | <kbd>⌘</kbd><kbd>E</kbd>      |
+| Create Snippet                    | <kbd>⌘</kbd><kbd>N</kbd>      |
+| Pin Snippet / Unpin Snippet       | <kbd>⌘</kbd><kbd>.</kbd>      |
+| Show in Finder                    | <kbd>⌘</kbd><kbd>F</kbd>      |
+| Delete Snippet                    | <kbd>⌃</kbd><kbd>X</kbd>      |
+
+**Copy Snippet** fills in the snippet, asking for any arguments, and puts the result on the
+clipboard instead of pasting it. The copy shows up in clipboard history like any other.
+
+The **Default action** setting in **Settings → Snippets** swaps <kbd>return</kbd> and
+<kbd>⌘</kbd><kbd>return</kbd>. If you set it to **Copy to Clipboard**, <kbd>return</kbd> copies and
+<kbd>⌘</kbd><kbd>return</kbd> pastes.
+
+**Delete Snippet** asks you to confirm before it removes the file.
 
 Press <kbd>esc</kbd>, or <kbd>delete</kbd> in an empty search, to go back.
 
@@ -68,7 +81,9 @@ different snippets folder, the shortcut is cleared. Snippet shortcuts aren't inc
 
 ## The file format
 
-Each snippet is one Markdown file in Tinycast's Application Support folder. Frontmatter is optional.
+Each snippet is one Markdown file in Tinycast's Application Support folder. To use another folder,
+click **Choose…** next to **Snippets Folder** in **Settings → Snippets**. Tinycast uses that folder
+as it is and doesn't move existing files. Frontmatter is optional.
 
 ```markdown
 ---
@@ -86,7 +101,7 @@ Attendees: {argument name="Attendees"}
 ```
 
 `name` defaults to the file name, and `keyword` is optional. `enabled` defaults to `true`, and
-`show_confirmation` defaults to `false`.
+`show_confirmation` defaults to `false`. Pinning a snippet adds `pinned: true`; unpinning removes it.
 
 Text values need **double quotes**. Keys aren't case-sensitive. Unknown keys, unquoted text,
 repeated keys, and booleans other than lowercase `true` or `false` are rejected with a message that
@@ -124,7 +139,7 @@ snippets you import keep working. Raycast's `{selectedText}` and `{query}` also 
 A value only needs quotes if it contains `|`. Without quotes, a value continues up to the next
 `key=`, so `{date format=MMMM d, yyyy}` keeps its spaces.
 
-The editor's **Insert…** menu lists every token. You type parameters and modifiers yourself.
+The editor's **Insert Placeholder** menu lists every token. You type parameters and modifiers yourself.
 
 ### Modifiers
 
@@ -172,7 +187,7 @@ Give a snippet a keyword, and typing that keyword in any app replaces it with th
 Settings shows the current status: **Off**, **Needs Accessibility** or **Active**.
 
 Keywords never expand in Tinycast's own search field or in Settings. A keyword typed in
-[Notes](/docs/features/notes) expands directly in the note.
+[Notes](/docs/features/notes) or the AI Chat message field expands directly there.
 
 ### How the text gets inserted
 
@@ -192,12 +207,25 @@ the meantime, Tinycast keeps your new copy. None of this appears in your
 Enabled snippets appear in launcher search while **Show in launcher** is on. **Both the name and the
 keyword are searchable**, and they rank the same way app names do.
 
-<kbd>return</kbd> pastes the snippet.
+<kbd>return</kbd> pastes the snippet, and <kbd>⌘</kbd><kbd>E</kbd> edits it.
 
 ## The editor
 
-Changes aren't saved until you click **Save**. **New** doesn't create a file until you save for the
-first time.
+The editor opens in the launcher, from **Create Snippet**, **Edit Snippet**, or the **New Snippet**
+and edit buttons in **Settings → Snippets**. The template is on the left, with its **Insert Placeholder** menu.
+**Name**, **Keyword**, **Enabled** and **Show confirmation** are on the right. A snippet needs a
+name before you can save it.
+
+| Key                                        | Does                             |
+| ------------------------------------------ | -------------------------------- |
+| <kbd>⌘</kbd><kbd>return</kbd>              | Save Snippet                     |
+| <kbd>return</kbd>                          | Start a new line in the template |
+| <kbd>tab</kbd>, <kbd>⇧</kbd><kbd>tab</kbd> | Move between fields              |
+| <kbd>⌥</kbd><kbd>tab</kbd>                 | Type a tab                       |
+| <kbd>esc</kbd>                             | Cancel and go back               |
+
+Changes aren't saved until you press **Save Snippet**. A new snippet doesn't create a file until you
+save it for the first time.
 
 If the file changed on disk while you were editing, Tinycast **refuses to save and reports a
 conflict** so it doesn't overwrite the other changes. Open the snippet again to see the current

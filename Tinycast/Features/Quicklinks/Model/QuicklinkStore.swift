@@ -46,7 +46,7 @@ final class QuicklinkStore {
 
     /// Under Application Support, the same per-channel root snippets use.
     private static var defaultDirectory: URL {
-        let bundleID = Bundle.main.bundleIdentifier ?? "com.tinycast.app"
+        let bundleID = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
         return FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(bundleID, isDirectory: true)
@@ -67,8 +67,14 @@ final class QuicklinkStore {
         quicklinks = loaded.sorted(by: Quicklink.precedes)
     }
 
-    /// A disabled quicklink is offered nowhere, so every surface lists this rather than `quicklinks`.
+    /// A disabled quicklink is offered nowhere, so every surface lists this, not `quicklinks`.
     var enabled: [Quicklink] { quicklinks.filter(\.isEnabled) }
+
+    func enabled(matching query: String) -> [Quicklink] {
+        let query = query.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return enabled }
+        return enabled.filter { $0.name.localizedCaseInsensitiveContains(query) }
+    }
 
     func quicklink(id: UUID) -> Quicklink? {
         quicklinks.first { $0.id == id }
@@ -81,14 +87,14 @@ final class QuicklinkStore {
     // Takes a whole draft, so adding an option doesn't churn every call site.
     @discardableResult
     func add(_ draft: Quicklink) throws(QuicklinkError) -> Quicklink {
-        let value = try validated(draft)
+        let value = try validated(draft, among: quicklinks)
         try write(value)
         return value
     }
 
     func update(_ draft: Quicklink) throws(QuicklinkError) {
         guard quicklinks.contains(where: { $0.id == draft.id }) else { return }
-        try write(validated(draft))
+        try write(validated(draft, among: quicklinks))
     }
 
     func remove(id: UUID) throws(QuicklinkError) {
@@ -131,27 +137,50 @@ final class QuicklinkStore {
                 showsInRootSearch: source.showsInRootSearch))
     }
 
-    /// Adds a batch, skipping anything invalid — the import and backup path. Returns what landed.
     @discardableResult
     func append(_ incoming: [Quicklink]) -> [Quicklink] {
+        insert(incoming, replacing: false)
+    }
+
+    @discardableResult
+    func replace(with incoming: [Quicklink]) -> Int {
+        insert(Self.sanitized(incoming), replacing: true).count
+    }
+
+    private func insert(_ incoming: [Quicklink], replacing: Bool) -> [Quicklink] {
+        guard isAvailable, execute("BEGIN IMMEDIATE") else { return [] }
+        var library = replacing ? [] : quicklinks
         var added: [Quicklink] = []
-        for candidate in incoming {
-            if let stored = try? add(candidate) { added.append(stored) }
+        var succeeded = !replacing || execute("DELETE FROM quicklinks")
+        for candidate in incoming where succeeded {
+            guard let value = try? validated(candidate, among: library) else { continue }
+            succeeded = upsert(value)
+            library.removeAll { $0.id == value.id }
+            library.append(value)
+            added.append(value)
         }
+        guard succeeded, execute("COMMIT") else {
+            execute("ROLLBACK")
+            return []
+        }
+        commit(library.sorted(by: Quicklink.precedes))
         return added
     }
 
-    /// Replaces the whole set on backup import, dropping invalid and duplicate records.
     @discardableResult
-    func replace(with incoming: [Quicklink]) -> Int {
-        guard isAvailable, sqlite3_exec(db, "DELETE FROM quicklinks", nil, nil, nil) == SQLITE_OK
-        else { return 0 }
-        commit([])
-        return append(Self.sanitized(incoming)).count
+    private func execute(_ sql: String) -> Bool {
+        sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK
     }
 
     private func write(_ value: Quicklink) throws(QuicklinkError) {
-        guard let stmt = upsertStmt else { throw .storageUnavailable }
+        guard upsert(value) else { throw .storageUnavailable }
+        var updated = quicklinks.filter { $0.id != value.id }
+        updated.append(value)
+        commit(updated.sorted(by: Quicklink.precedes))
+    }
+
+    private func upsert(_ value: Quicklink) -> Bool {
+        guard let stmt = upsertStmt else { return false }
         sqlite3_bind_text(stmt, 1, value.id.uuidString, -1, SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, 2, value.name, -1, SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, 3, value.link, -1, SQLITE_TRANSIENT)
@@ -168,11 +197,7 @@ final class QuicklinkStore {
         let status = sqlite3_step(stmt)
         sqlite3_reset(stmt)
         sqlite3_clear_bindings(stmt)
-        guard status == SQLITE_DONE else { throw .storageUnavailable }
-
-        var updated = quicklinks.filter { $0.id != value.id }
-        updated.append(value)
-        commit(updated.sorted(by: Quicklink.precedes))
+        return status == SQLITE_DONE
     }
 
     private func bind(_ stmt: OpaquePointer, _ index: Int32, _ value: String?) {
@@ -189,7 +214,9 @@ final class QuicklinkStore {
         onChange?(updated)
     }
 
-    private func validated(_ draft: Quicklink) throws(QuicklinkError) -> Quicklink {
+    private func validated(
+        _ draft: Quicklink, among library: [Quicklink]
+    ) throws(QuicklinkError) -> Quicklink {
         guard isAvailable else { throw .storageUnavailable }
         var value = draft
         value.name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -211,7 +238,7 @@ final class QuicklinkStore {
                 || QuicklinkDestination.detect(value.link) != nil
         else { throw .unresolvableLink }
         guard
-            !quicklinks.contains(where: {
+            !library.contains(where: {
                 $0.id != value.id
                     && $0.name.compare(value.name, options: .caseInsensitive) == .orderedSame
             })
@@ -265,7 +292,7 @@ final class QuicklinkStore {
               in_root_search = excluded.in_root_search, pinned_at = excluded.pinned_at
             """
         )
-        // Both statements name columns in the struct's order, which `is_enabled` was appended after.
+        // Both statements name columns in struct order, which `is_enabled` was appended after.
         loadStmt = prepare(
             """
             SELECT id, name, link, open_with, icon, is_enabled, in_root_search, pinned_at, created_at

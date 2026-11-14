@@ -1,6 +1,14 @@
 import FoundationModels
 import Foundation
 
+/// Fork: callable on macOS 15, where the on-device model does not exist.
+enum AppleIntelligenceAvailability {
+    static func status() -> AppleIntelligenceStatus {
+        guard #available(macOS 26.0, *) else { return .deviceNotEligible }
+        return AppleIntelligenceProvider.status()
+    }
+}
+
 /// The only provider with nothing to configure, so a first run may select it unasked.
 @available(macOS 26.0, *)
 struct AppleIntelligenceProvider: AIProvider {
@@ -31,7 +39,7 @@ struct AppleIntelligenceProvider: AIProvider {
                     }
                     let turn = Self.turn(for: request)
                     guard let prompt = turn.prompt else {
-                        throw AIProviderError.responseFailed("There was nothing to send.")
+                        throw AIProviderError.responseFailed(String(localized: "There was nothing to send."))
                     }
                     let session = LanguageModelSession(
                         model: SystemLanguageModel(guardrails: guardrails),
@@ -94,21 +102,30 @@ struct AppleIntelligenceProvider: AIProvider {
         switch error {
         case .exceededContextWindowSize:
             return .responseFailed(
-                "This conversation is longer than the on-device model can hold. Start a new chat.")
+                String(
+                    localized: """
+                        This conversation is longer than the on-device model can hold. Start a new chat.
+                        """))
         case .guardrailViolation, .refusal:
-            return .responseFailed("Apple Intelligence declined to answer that.")
+            return .responseFailed(String(localized: "Apple Intelligence declined to answer that."))
         case .unsupportedLanguageOrLocale:
-            return .responseFailed("Apple Intelligence does not support this language yet.")
+            return .responseFailed(
+                String(localized: "Apple Intelligence does not support this language yet."))
         case .assetsUnavailable:
-            return .unavailable("Apple Intelligence is still downloading its model.")
+            return .unavailable(
+                String(
+                    localized:
+                        "Apple Intelligence is currently unavailable. Check its status in System Settings."))
         case .rateLimited:
-            return .responseFailed("Apple Intelligence is busy. Try again shortly.")
+            return .responseFailed(String(localized: "Apple Intelligence is busy. Try again shortly."))
         case .concurrentRequests:
-            return .responseFailed("Apple Intelligence is already answering. Try again shortly.")
+            return .responseFailed(
+                String(localized: "Apple Intelligence is already answering. Try again shortly."))
         case .decodingFailure, .unsupportedGuide:
             return .malformedResponse
         @unknown default:
-            return .responseFailed("Apple Intelligence could not complete the response.")
+            return .responseFailed(
+                String(localized: "Apple Intelligence could not complete the response."))
         }
     }
 }

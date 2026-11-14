@@ -20,7 +20,6 @@ final class WindowCommandCoordinator {
         self.customSizes = customSizes
     }
 
-    /// The one funnel for palette and hotkey alike. See docs/features/window-management.md#wiring.
     func runWindowCommand(id: WindowCommand.ID) {
         guard settings.windowManagementEnabled else { return }
         if let direction = SpaceDirection(id) {
@@ -31,12 +30,18 @@ final class WindowCommandCoordinator {
         }
         windowMover.perform(
             id, target: handOffTarget(), gap: CGFloat(settings.windowGap),
-            cycle: settings.windowCycle)
+            cycle: settings.windowCycle, wrapsDisplays: settings.windowWrapsDisplays,
+            keepsProportions: settings.windowKeepsProportions)
     }
 
     /// The same funnel for a custom size, so the feature switch gates it identically.
     func runCustomWindowSize(id: UUID) {
-        guard settings.windowManagementEnabled, let size = customSizes.size(id: id) else { return }
+        guard let size = customSizes.size(id: id) else { return }
+        runWindowSize(size)
+    }
+
+    func runWindowSize(_ size: CustomWindowSize) {
+        guard settings.windowManagementEnabled else { return }
         windowMover.perform(size, target: handOffTarget(), gap: CGFloat(settings.windowGap))
     }
 

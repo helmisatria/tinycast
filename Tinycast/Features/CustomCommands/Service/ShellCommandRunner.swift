@@ -32,7 +32,6 @@ struct ShellCommandResult: Sendable, Equatable {
 
     var succeeded: Bool { termination.succeeded }
 
-    /// What a command said about itself, for a report with room for one line.
     var lastOutputLine: String? {
         standardOutput?
             .split(whereSeparator: \.isNewline).last
@@ -88,15 +87,20 @@ enum ShellCommandRunner {
         _ command: String, arguments: [String], loadingShellEnvironment: Bool,
         workingDirectory: String?
     ) -> ShellCommandResult {
-        guard let directory = resolvedWorkingDirectory(workingDirectory) else {
-            return ShellCommandResult(termination: .launchFailed(missingDirectory(workingDirectory)))
+        let launch: Launch
+        do {
+            launch = try prepare(
+                command, arguments: arguments, loadingShellEnvironment: loadingShellEnvironment,
+                workingDirectory: workingDirectory)
+        } catch {
+            return ShellCommandResult(termination: .launchFailed(error.reason))
         }
+        defer { launch.removeScript() }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
-        process.arguments = shellArguments(
-            command: command, arguments: arguments,
-            loadingShellEnvironment: loadingShellEnvironment)
-        process.currentDirectoryURL = URL(fileURLWithPath: directory)
+        process.arguments = launch.arguments
+        process.currentDirectoryURL = URL(fileURLWithPath: launch.directory)
         // Lets a shell config skip slow sections when Tinycast is the caller.
         process.environment = ProcessInfo.processInfo.environment.merging(["TINYCAST": "1"]) { _, new in
             new
@@ -132,38 +136,34 @@ enum ShellCommandRunner {
         _ command: String, arguments: [String] = [], loadingShellEnvironment: Bool = false,
         workingDirectory: String? = nil
     ) -> ShellCommandSession {
+        let launch: Launch
+        do {
+            launch = try prepare(
+                command, arguments: arguments, loadingShellEnvironment: loadingShellEnvironment,
+                workingDirectory: workingDirectory)
+        } catch {
+            return failedSession(error.reason)
+        }
+
         var environment = ProcessInfo.processInfo.environment
         environment["TINYCAST"] = "1"
         // A terminal makes tools colour output, so ask for colour the window can draw.
         environment["TERM"] = "xterm-256color"
 
-        let directory = resolvedWorkingDirectory(workingDirectory)
-        let terminal = directory.flatMap {
-            PseudoTerminal.spawn(
-                executable: shell,
-                arguments: shellArguments(
-                    command: command, arguments: arguments,
-                    loadingShellEnvironment: loadingShellEnvironment),
-                environment: environment, workingDirectory: $0)
-        }
-
-        guard let terminal else {
-            let reason =
-                directory == nil
-                ? missingDirectory(workingDirectory) : "The shell could not be started."
-            return ShellCommandSession(
-                events: AsyncStream { continuation in
-                    continuation.yield(
-                        .finished(ShellCommandResult(termination: .launchFailed(reason))))
-                    continuation.finish()
-                },
-                stop: {})
+        guard
+            let terminal = PseudoTerminal.spawn(
+                executable: shell, arguments: launch.arguments, environment: environment,
+                workingDirectory: launch.directory)
+        else {
+            launch.removeScript()
+            return failedSession(String(localized: "The shell could not be started."))
         }
 
         let stopped = StopFlag()
         let events = AsyncStream<ShellCommandEvent> { continuation in
             queue.async {
                 drain(terminal, stopped: stopped, into: continuation)
+                launch.removeScript()
             }
         }
         return ShellCommandSession(
@@ -178,6 +178,15 @@ enum ShellCommandRunner {
             })
     }
 
+    nonisolated private static func failedSession(_ reason: String) -> ShellCommandSession {
+        ShellCommandSession(
+            events: AsyncStream { continuation in
+                continuation.yield(.finished(ShellCommandResult(termination: .launchFailed(reason))))
+                continuation.finish()
+            },
+            stop: {})
+    }
+
     /// One queue, one reader: the decode buffer is touched from here alone, so it needs no lock.
     nonisolated private static func drain(
         _ terminal: PseudoTerminal, stopped: StopFlag,
@@ -188,6 +197,14 @@ enum ShellCommandRunner {
         var lastYield = ContinuousClock().now
 
         while true {
+            // A waiting prompt never prints again, so only a quiet pty can show its unended line.
+            if decoder.canFlush, !hasOutput(terminal.parentEnd, within: flushInterval) {
+                if let text = decoder.take(force: true) {
+                    continuation.yield(.output(text))
+                    lastYield = ContinuousClock().now
+                }
+                continue
+            }
             // Zero is EOF; -1 with EIO is what a pty master returns once its child is gone.
             let count = read(terminal.parentEnd, &buffer, readSize)
             guard count > 0 else { break }
@@ -199,6 +216,7 @@ enum ShellCommandRunner {
             }
         }
         if let text = decoder.take(force: true) { continuation.yield(.output(text)) }
+        if let text = decoder.takeTruncated() { continuation.yield(.output(text)) }
 
         let status = terminal.wait()
         terminal.close()
@@ -207,6 +225,17 @@ enum ShellCommandRunner {
                 ShellCommandResult(
                     termination: stopped.isSet ? .stopped : .exited(status: status))))
         continuation.finish()
+    }
+
+    /// A hangup counts as output, so the `read` that follows still sees the child go.
+    nonisolated private static func hasOutput(_ descriptor: Int32, within interval: Duration) -> Bool {
+        var request = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+        var ready: Int32
+        // An interrupted wait says nothing about the pty; falling through would block in `read`.
+        repeat {
+            ready = poll(&request, 1, Int32(interval / .milliseconds(1)))
+        } while ready < 0 && errno == EINTR
+        return ready != 0
     }
 
     /// Set from the main actor and read on the drain queue, so the flag carries its own lock.
@@ -228,8 +257,11 @@ enum ShellCommandRunner {
     }
 
     /// Whole lines only: a newline is a scalar boundary, so no read decodes mid-character.
-    private struct TerminalTextDecoder {
+    struct TerminalTextDecoder {
         private var pending: [UInt8] = []
+
+        /// A lone partial character is not text yet, so waiting on it alone would wake for nothing.
+        var canFlush: Bool { scalarBoundary(before: pending.count) > 0 }
 
         mutating func append(_ bytes: [UInt8], count: Int) {
             pending.append(contentsOf: bytes[0..<count])
@@ -244,10 +276,21 @@ enum ShellCommandRunner {
                 end = scalarBoundary(before: pending.count)
             }
             guard let end, end > 0 else { return nil }
-            // Latin-1 cannot fail, so other encodings still reach the reader.
             let bytes = Array(pending[0..<end])
             pending.removeFirst(end)
-            return String(bytes: bytes, encoding: .utf8) ?? String(bytes: bytes, encoding: .isoLatin1)
+            return Self.decode(bytes)
+        }
+
+        /// Once the command is gone nothing can complete a character, so its bytes are shown as is.
+        mutating func takeTruncated() -> String? {
+            guard !pending.isEmpty else { return nil }
+            defer { pending.removeAll() }
+            return Self.decode(pending)
+        }
+
+        /// Latin-1 cannot fail, so other encodings still reach the reader.
+        private static func decode(_ bytes: [UInt8]) -> String? {
+            String(bytes: bytes, encoding: .utf8) ?? String(bytes: bytes, encoding: .isoLatin1)
         }
 
         /// Walks back over at most three continuation bytes to the start of a whole character.
@@ -261,7 +304,8 @@ enum ShellCommandRunner {
             // A lead byte only holds back when its own sequence is still incomplete.
             guard boundary > 0 else { return index }
             let lead = pending[boundary - 1]
-            let width = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1
+            // RFC 3629: 0xF5 and up never begin a character, so nothing is held back for them.
+            let width = lead >= 0xF5 ? 1 : lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1
             return index - boundary + 1 >= width ? index : boundary - 1
         }
     }
@@ -279,16 +323,49 @@ enum ShellCommandRunner {
         return expanded
     }
 
-    nonisolated private static func missingDirectory(_ path: String?) -> String {
-        "The folder “\(path ?? "")” no longer exists."
+    /// What a run spawns; a `#!` command also owns the script file zsh execs.
+    private struct Launch: Sendable {
+        let arguments: [String]
+        let directory: String
+        let script: URL?
+
+        func removeScript() {
+            guard let script else { return }
+            try? FileManager.default.removeItem(at: script)
+        }
+    }
+
+    private struct LaunchFailure: Error {
+        let reason: String
     }
 
     /// Values follow as `$1`, `$2`, never spliced where zsh would re-parse them as syntax.
-    nonisolated private static func shellArguments(
-        command: String, arguments: [String], loadingShellEnvironment: Bool
-    ) -> [String] {
+    nonisolated private static func prepare(
+        _ command: String, arguments: [String], loadingShellEnvironment: Bool,
+        workingDirectory: String?
+    ) throws(LaunchFailure) -> Launch {
+        guard let directory = resolvedWorkingDirectory(workingDirectory) else {
+            throw LaunchFailure(
+                reason: String(localized: "The folder “\(workingDirectory ?? "")” no longer exists."))
+        }
         // zsh reads `.zshrc` only for interactive shells, so `-l` alone sees no aliases.
-        [loadingShellEnvironment ? "-ilc" : "-lc", command, "tinycast"] + arguments
+        let flag = loadingShellEnvironment ? "-ilc" : "-lc"
+        guard command.hasPrefix("#!") else {
+            return Launch(
+                arguments: [flag, command, "tinycast"] + arguments, directory: directory,
+                script: nil)
+        }
+        // The kernel reads the `#!` line, so the text reaches its interpreter unparsed by zsh.
+        let script = FileManager.default.temporaryDirectory
+            .appending(path: "tinycast-command-script-\(UUID().uuidString)")
+        guard
+            FileManager.default.createFile(
+                atPath: script.path, contents: Data(command.utf8),
+                attributes: [.posixPermissions: 0o700])
+        else { throw LaunchFailure(reason: String(localized: "The script could not be written.")) }
+        return Launch(
+            arguments: [flag, #"exec "$0" "$@""#, script.path] + arguments, directory: directory,
+            script: script)
     }
 
     /// A temp file, not a `Pipe`: nothing drains a pipe until the command exits.

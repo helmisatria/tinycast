@@ -34,6 +34,12 @@ enum CalcTokenizer {
                 }
             }
 
+            if isDigit(ch), let fraction = unitFraction(chars, at: i) {
+                tokens.append(.number(fraction.value))
+                i = fraction.end
+                continue
+            }
+
             if isDigit(ch) || (ch == "." && i + 1 < chars.count && isDigit(chars[i + 1])) {
                 var text = ""
                 var seenDot = false
@@ -43,7 +49,6 @@ enum CalcTokenizer {
                         text.unicodeScalars.append(c)
                     } else if c == "," && functionDepth == nil && i + 1 < chars.count && isDigit(chars[i + 1])
                     {
-                        // grouping separator between digits — skip
                     } else if c == "." && !seenDot {
                         seenDot = true
                         text.unicodeScalars.append(c)
@@ -75,7 +80,9 @@ enum CalcTokenizer {
                     guard scaled.isFinite else { return nil }
                     tokens.append(.compactNumber(scaled))
                     i += 1
-                } else if let magnitude = magnitudeWord(chars, after: i) {
+                } else if let magnitude = magnitudeWord(chars, after: i)
+                    ?? currencyMagnitude(chars, after: i, previous: tokens.last)
+                {
                     let scaled = value * magnitude.scale
                     guard scaled.isFinite else { return nil }
                     tokens.append(.compactNumber(scaled))
@@ -118,6 +125,19 @@ enum CalcTokenizer {
                     }
                     i += 1
                 }
+                if let previous = tokens.last, endsOperand(previous), mayBeWordOperator(text),
+                    let word = wordOperator(text.lowercased(), chars, after: i)
+                {
+                    tokens.append(contentsOf: word.tokens)
+                    i = word.end
+                    continue
+                }
+                if let head = spokenRootHead(text.lowercased()),
+                    followingWords(["root"], chars, after: i) != nil
+                {
+                    tokens.append(.ident(head))
+                    continue
+                }
                 if let unit = compoundUnit(chars, after: i, prefix: text) {
                     tokens.append(.ident(unit.name))
                     i = unit.end
@@ -134,7 +154,12 @@ enum CalcTokenizer {
                 continue
             }
 
-            // "**" is the Python/JS/shell spelling of power, same operator as "^".
+            if let mark = lengthMark(ch), i > 0, isDigit(chars[i - 1]) {
+                tokens.append(.ident(mark))
+                i += 1
+                continue
+            }
+
             if ch == "*", i + 1 < chars.count, chars[i + 1] == "*" {
                 tokens.append(.op(.power))
                 i += 2
@@ -214,12 +239,11 @@ enum CalcTokenizer {
         guard index > 0, !chars[index - 1].isLetter, let previous, endsOperand(previous) else {
             return false
         }
-        if index + 2 < chars.count,
-            ["o", "O"].contains(chars[index + 1]),
-            ["r", "R"].contains(chars[index + 2]),
-            index + 3 == chars.count || !chars[index + 3].isLetter
-        {
-            return false
+        var end = index + 1
+        while end < chars.count, chars[end].isLetter { end += 1 }
+        if end > index + 1 {
+            let name = String(String.UnicodeScalarView(chars[index..<end])).lowercased()
+            if name == "xor" || CalcCurrency.byName[name] != nil { return false }
         }
         let attached = !chars[index - 1].isWhitespace
         var next = index + 1
@@ -230,6 +254,134 @@ enum CalcTokenizer {
             return false
         default:
             return true
+        }
+    }
+
+    /// Every spoken operator is two to ten letters and starts with one of these.
+    private static func mayBeWordOperator(_ text: String) -> Bool {
+        guard (2...10).contains(text.utf8.count), let first = text.utf8.first else { return false }
+        return "pmtdscrePMTDSCRE".utf8.contains(first)
+    }
+
+    private static func spokenRootHead(_ word: String) -> String? {
+        switch word {
+        case "squared": "square"
+        case "cubed": "cube"
+        default: nil
+        }
+    }
+
+    private static func wordOperator(
+        _ word: String, _ chars: [Unicode.Scalar], after index: Int
+    ) -> (tokens: [CalcToken], end: Int)? {
+        let attached = index < chars.count && (chars[index].isNumber || chars[index].isCombiningMark)
+        guard !attached else { return nil }
+        switch word {
+        case "per":
+            if let end = followingWords(["cent"], chars, after: index) { return ([.op(.percent)], end) }
+            return ([.op(.divide)], index)
+        case "percent", "percentage": return ([.op(.percent)], index)
+        case "exponent": return ([.op(.power)], index)
+        case "raised":
+            guard let end = followingWords(["to"], chars, after: index) else { return nil }
+            return ([.op(.power)], followingWords(["the", "power", "of"], chars, after: end) ?? end)
+        case "plus": return ([.op(.add)], index)
+        case "minus": return ([.op(.subtract)], index)
+        case "times": return ([.op(.multiply)], index)
+        case "squared": return ([.op(.power), .number(2)], index)
+        case "cubed": return ([.op(.power), .number(3)], index)
+        case "divided", "multiplied":
+            guard let end = followingWords(["by"], chars, after: index) else { return nil }
+            return ([.op(word == "divided" ? .divide : .multiply)], end)
+        case "to":
+            if let end = followingWords(["the", "power", "of"], chars, after: index) {
+                return ([.op(.power)], end)
+            }
+            // `3 to the 9`: only a digit after `the`, so `to the nearest 10` keeps rounding.
+            guard let end = followingWords(["the"], chars, after: index), end < chars.count,
+                chars[end].isWhitespace,
+                chars[(end + 1)...].first(where: { !$0.isWhitespace })?.isNumber == true
+            else { return nil }
+            return ([.op(.power)], end)
+        default: return nil
+        }
+    }
+
+    private static func followingWords(
+        _ expected: [String], _ chars: [Unicode.Scalar], after index: Int
+    ) -> Int? {
+        var end = index
+        for word in expected {
+            var start = end
+            while start < chars.count, chars[start].isWhitespace { start += 1 }
+            end = start
+            while end < chars.count, chars[end].isLetter { end += 1 }
+            guard String(String.UnicodeScalarView(chars[start..<end])).lowercased() == word else {
+                return nil
+            }
+        }
+        return end
+    }
+
+    /// Only before a unit, so spaced `1 / 20ms` and a bare `5/2 - 1/2` keep dividing.
+    private static func unitFraction(_ chars: [Unicode.Scalar], at start: Int) -> (value: Double, end: Int)? {
+        guard let first = integer(chars, from: start) else { return nil }
+        var whole = 0.0
+        var numerator = first
+        if first.end < chars.count, chars[first.end].isWhitespace {
+            var next = first.end
+            while next < chars.count, chars[next].isWhitespace { next += 1 }
+            guard let part = integer(chars, from: next) else { return nil }
+            whole = first.value
+            numerator = part
+        }
+        guard numerator.end < chars.count, chars[numerator.end] == "/",
+            let denominator = integer(chars, from: numerator.end + 1), denominator.value != 0,
+            namesUnit(chars, from: denominator.end)
+        else { return nil }
+        return (whole + numerator.value / denominator.value, denominator.end)
+    }
+
+    private static func integer(_ chars: [Unicode.Scalar], from start: Int) -> (value: Double, end: Int)? {
+        var end = start
+        while end < chars.count, (48...57).contains(chars[end].value) { end += 1 }
+        guard end > start, end - start <= 15, end == chars.count || chars[end] != "." else { return nil }
+        return Double(String(String.UnicodeScalarView(chars[start..<end]))).map { ($0, end) }
+    }
+
+    private static func namesUnit(_ chars: [Unicode.Scalar], from index: Int) -> Bool {
+        if index < chars.count, lengthMark(chars[index]) != nil { return true }
+        var start = index
+        while start < chars.count, chars[start].isWhitespace { start += 1 }
+        var end = start
+        while end < chars.count, chars[end].isLetter || (end > start && chars[end].isNumber) { end += 1 }
+        guard end > start else { return false }
+        let name = String(String.UnicodeScalarView(chars[start..<end]))
+        return CalcUnits.byName[name] != nil || CalcUnits.byName[name.lowercased()] != nil
+            || compoundUnit(chars, after: end, prefix: name) != nil
+    }
+
+    private static func lengthMark(_ ch: Unicode.Scalar) -> String? {
+        switch ch {
+        case "\"", "″", "”": "inch"
+        case "'", "′", "’": "ft"
+        default: nil
+        }
+    }
+
+    /// `$5M`, `€2bn`: only right after a currency, where `m` and `b` can't mean metre or byte.
+    private static func currencyMagnitude(
+        _ chars: [Unicode.Scalar], after index: Int, previous: CalcToken?
+    ) -> (scale: Double, end: Int)? {
+        guard case .ident(let code)? = previous, CalcCurrency.byName[code] != nil else { return nil }
+        var end = index
+        while end < chars.count, chars[end].isLetter { end += 1 }
+        guard end > index, end == chars.count || !chars[end].isNumber else { return nil }
+        switch String(String.UnicodeScalarView(chars[index..<end])) {
+        case "m", "M": return (1e6, end)
+        case "b", "B", "bn": return (1e9, end)
+        case "t", "T", "tn": return (1e12, end)
+        default: return nil
         }
     }
 
@@ -266,7 +418,9 @@ enum CalcTokenizer {
     }
 
     /// Short scale only: the engine reads canonical English, where a billion is 10⁹.
-    private static let magnitudes: [String: Double] = ["thousand": 1e3, "million": 1e6, "billion": 1e9]
+    private static let magnitudes: [String: Double] = [
+        "thousand": 1e3, "million": 1e6, "billion": 1e9, "trillion": 1e12, "quadrillion": 1e15
+    ]
 
     /// The scale of a whole magnitude word following a literal (`13 million`), and where it ends.
     private static func magnitudeWord(

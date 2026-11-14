@@ -6,10 +6,10 @@ verifying a change is [testing.md](testing.md).
 ## Requirements
 
 - macOS 15 or later. Liquid Glass and Apple Intelligence require macOS 26.
-- Xcode 26 — it provides the SwiftUI macro plugin and the SDK.
+- Xcode 27 — it provides the SwiftUI macro plugin and the SDK.
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen), and for linting:
   `brew install swiftlint`.
-- Node, for the generators and for the two stub servers `run-tests.sh` drives. It is the only
+- Node, for the generators and the local test stub servers `run-tests.sh` drives. It is the only
   scripting runtime here — building the app still needs none of it.
 
 ## First-time setup
@@ -53,13 +53,14 @@ download on demand; none are app resources.
 
 ### The dev channel
 
-Debug builds are a separate channel: **`Tinycast Dev.app`**, bundle id `com.tinycast.app.dev`. Every
-persisted thing is keyed by bundle id — `~/Library/Preferences/<id>.plist` (settings and hotkey
+Debug builds are a separate channel: **`Tinycast Dev.app`**, bundle id `com.abueammar.tinycast.dev`.
+Every persisted thing is keyed by bundle id — `~/Library/Preferences/<id>.plist` (settings and hotkey
 bindings), `~/Library/Application Support/<id>/` (the onboarding marker, Notes, snippets, quicklinks,
 clipboard history, calculator history, launch ranking and frequent emoji; Notes and snippets unless
 a folder is chosen),
 `~/Library/Caches/<id>/` (exchange rates, the update check, staged downloads), the opt-in
-`~/.config/tinycast-dev/settings.json` (`tinycast` on stable), the `SMAppService`
+`~/.config/tinycast-dev/settings.json` (`tinycast` on stable), the `tinycast-dev://` link scheme
+(`tinycast://` on stable), the `SMAppService`
 login item, and the Accessibility / Input Monitoring (TCC) grants — so a local build can neither read
 nor clobber an installed app's state, and both run side by side.
 
@@ -73,8 +74,9 @@ Consequences worth knowing:
   and onboarding unseen. Grant and bind once; the fixed build path and stable signing identity keep
   the TCC grant alive across rebuilds. Never launch unsigned compile-check outputs.
 - Don't bind the same global hotkey in both — whichever registered first wins.
-- The Hyper Key's Caps Lock remap is `hidutil` state, which is **system-wide, not per-bundle**: quitting
-  one build clears the remap for the other, which then needs a rebind or a relaunch to restore it.
+- The Hyper Key's Caps Lock remap lives on the keyboards, which are **shared, not per-bundle**:
+  enable Hyper in one build at a time so their keyboard owners do not compete. An identical mapping
+  already installed by another build is left unowned.
 
 ## Editor
 
@@ -109,7 +111,7 @@ also mixes Release entries in with Debug and lets them win. `Scripts/sync-lsp.sh
 
 `xcodebuild` never compiles the harnesses — they are not in the Xcode project — so nothing emits a
 compile command for them, and without one an open harness reports every shipped type it uses as *cannot
-find in scope*. Measured on `fuzz-test.swift`: 60 errors with no entry, 0 with one.
+find in scope*. Measured on `FuzzTests.swift`: 60 errors with no entry, 0 with one.
 
 ```sh
 ./Scripts/run-tests.sh --index    # merge the harness compile commands into .compile
@@ -141,6 +143,23 @@ already-running server does not re-read `.compile`.
 the repo root excludes the generated files and the two off-limits files in `DesignSystem/Scrolling/`.
 The comment policy in [standards.md](standards.md#comments) is deliberately not among its rules.
 
+`lint.sh` also runs `check-localizations.js`, which fails on a string missing from any language, a
+missing plural form, a stale entry, or a translation whose format specifiers differ from the source.
+
+## Localization
+
+```sh
+./Scripts/sync-strings.sh   # build, merge new UI strings into Localizable.xcstrings, then check it
+```
+
+`xcodebuild` extracts strings but never writes them back to the catalog — only a build in Xcode's IDE
+does — so run this after changing UI text, then translate what it added (Xcode's catalog editor, or
+the JSON directly). A string whose source changed leaves its old entry stale; delete it. The rules for
+writing localizable code are in [standards.md](standards.md#localization).
+
+To see a language without changing the setting, launch the Debug build with
+`-AppleLanguages '(de)'`; add `-NSDoubleLocalizedStrings YES` to find labels that truncate.
+
 ## Formatting
 
 ```sh
@@ -171,8 +190,8 @@ Xcode's re-indent (⌃I), as it always has been. Two consequences worth knowing:
 - `force_try` is an error; `force_cast` only warns, because the AX and AppKit bridges have four
   legitimate ones.
 
-Errors block, warnings do not. No CI runs this script; CodeRabbit runs SwiftLint on each PR but not
-the settings-search check, so run it locally before you open one.
+Errors block, warnings do not. No CI runs this script, so run it locally before you open a
+PR.
 
 ## Generated data
 

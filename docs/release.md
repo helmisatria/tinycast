@@ -34,23 +34,24 @@ releases are built by CI, below.
 
 ## Signing & Gatekeeper
 
-CI releases use the stable `Tinycast Self-Signed` identity; local builds can preserve an existing
-Apple Development identity through `LocalSigning.xcconfig`. Neither is a Developer ID distribution
-signature, so macOS quarantines a directly-downloaded DMG. The Homebrew cask strips that
-automatically; direct downloaders run `xattr -dr com.apple.quarantine "…/Tinycast.app"` once. Full
-details in [signing.md](signing.md).
+CI releases are signed with the team's Developer ID, notarized and stapled, so a downloaded DMG
+opens without a Gatekeeper warning. Local builds, `build-dmg.sh` included, keep signing with
+`Tinycast Self-Signed` and are never notarized. Full details in [signing.md](signing.md).
+
+Fork releases (above) use this Mac's Apple Development identity instead, and are not
+notarized. Local builds can preserve that identity through `LocalSigning.xcconfig`.
 
 ## How the in-app updater consumes a release
 
-Every release publishes two assets from one build: `Tinycast-<version>.dmg`, which people download by
-hand and which the cask installs, and `Tinycast-<version>.zip`, which the in-app updater installs. The
-zip is produced with `ditto -c -k --keepParent --sequesterRsrc` — the only zip that leaves the code
-signature verifiable, which matters because the updater refuses any bundle whose signature does not
-prove it is ours.
+Every release publishes three assets from one build: `Tinycast-<version>.dmg`, which people download
+by hand and which the cask installs, `Tinycast-<version>.zip`, which the in-app updater installs, and
+`Tinycast-<version>.zip.sig`, the zip's signature by the release key. The zip is produced with
+`ditto -c -k --keepParent --sequesterRsrc` — the only zip that leaves the code signature verifiable,
+which matters because the updater refuses any bundle it cannot prove is ours.
 
 A stable release publishes two more from the `universal` job, `Tinycast-Universal-<version>.dmg` and
 `.zip`, built from the same commit at the same version and bundle id but with both slices. They are
-uploaded *after* the thin pair, which keeps the thin zip first in the asset list so builds predating
+uploaded _after_ the thin pair, which keeps the thin zip first in the asset list so builds predating
 architecture-aware selection keep choosing it.
 
 Three things a release must keep true, or the updater skips it:
@@ -61,7 +62,7 @@ Three things a release must keep true, or the updater skips it:
   `prerelease` flag. A tag of any other shape is treated as mis-published and skipped.
 - **It is not a draft.**
 
-**Both casks declare `auto_updates true`.** That is Homebrew's flag for an app that manages its own
+**Every cask declares `auto_updates true`.** That is Homebrew's flag for an app that manages its own
 version, and it is what keeps `brew update && brew upgrade` from fighting an app that updated itself:
 brew never reports Tinycast outdated, never re-downloads it, and never rolls a self-updated copy back.
 Removing that line would reintroduce exactly those three problems. See
@@ -69,9 +70,7 @@ Removing that line would reintroduce exactly those three problems. See
 
 ## Pull request review
 
-There is no CI workflow. CodeRabbit reviews every PR against `.coderabbit.yaml`: it runs SwiftLint
-with `.swiftlint.yml`, annotates the diff and applies the pre-merge checks. It is a reviewer, not a
-gate — it neither runs the harnesses nor builds the app, so the whole bar in
+There is no CI workflow and no automated reviewer, so the whole bar in
 [testing.md](testing.md#definition-of-done) is run locally before a PR is opened.
 
 ## Releasing
@@ -85,20 +84,34 @@ needed. Run it from the **Actions** tab (`Release` → **Run workflow**) and pic
   version as-is.
 - **version** — base semver, e.g. `0.2.0`.
 
-It builds on a `macos-26` runner with Xcode 26 and publishes a GitHub Release tagged
-`v<full-version>` with a versioned DMG and zip asset, marked prerelease for beta. On success it also
-bumps the matching cask in the tap and announces the release on Discord. A stable run also
-dispatches the Website workflow, because the site reads the latest version and the
-[changelog](https://tinycast.dev/changelog/) from GitHub at build time.
+Its first step is `Scripts/check-migrations.sh`: a migration that a stable release already shipped
+stops the run until it is deleted ([migrations.md](migrations.md)). The check reads tags and history,
+so the checkout fetches every commit without blobs.
+
+It builds on an `xcode-27` runner with the newest released Xcode 27 and publishes a GitHub Release
+tagged `v<full-version>` with a versioned DMG and zip asset, marked prerelease for beta. On success
+it also announces the release on Discord. A stable run also dispatches the Website workflow, because
+the site reads the latest version and the [changelog](https://tinycast.dev/changelog/) from GitHub at
+build time.
 
 A stable run then fans out to a second job, `universal`, which rebuilds the same commit with
 `ARCHS="arm64 x86_64"` and attaches `Tinycast-Universal-<version>.dmg` / `.zip` to the release the
 first job created, then bumps `tinycast-universal`. macOS 26 is the last release that boots on Intel,
-and those Macs need both slices. Both jobs pin `ARCHS` explicitly and assert the slices on *every*
-shipping binary — the app, `ClipboardTextHelper` and `Tinycast Dictation`: trusting `ARCHS_STANDARD` is what
-shipped a thin arm64 build to Intel users once already, and it also keeps the Apple silicon download
-from silently gaining a slice it never needs. A thin helper inside a universal app is the quiet form
-of the same bug: the app boots on Intel and only clipboard OCR or dictation stops working.
+and those Macs need both slices. Both jobs pin `ARCHS` explicitly and assert the slices on _every_
+shipping binary — the app, `ClipboardTextHelper`, `FileIndexHelper` and `Tinycast Dictation`:
+trusting `ARCHS_STANDARD` is what shipped a thin arm64 build to Intel users once already, and it
+also keeps the Apple silicon download from silently gaining a slice it never needs. A thin helper
+inside a universal app is the quiet form of the same bug: the app boots on Intel and only clipboard
+OCR or dictation stops working.
+
+Both jobs run in the `release` environment, which holds the signing and notary secrets and deploys
+from `main` only ([signing.md](signing.md#2-the-release-secrets)). After `verify-signature.sh`,
+`Scripts/package-release.sh` packs and signs the DMG, submits it once with `notarytool --wait`, and
+staples the ticket to the DMG and to the app before zipping it, so the updater's zip is stapled too.
+Any status but `Accepted` prints Apple's log and stops the run before anything is published.
+`Scripts/sign-update.swift` then signs the zip, and fails the run if the built app trusts a different
+update key. `Scripts/check-update-path.sh` runs just before notarizing, and fails the run unless the
+last release on the channel would install this build ([signing.md](signing.md#update-trust)).
 
 Channel builds override `TINYCAST_BUNDLE_IDENTIFIER`, not the target-wide `PRODUCT_BUNDLE_IDENTIFIER`.
 The Dictation helper derives its own identifier with a `.dictation` suffix; signature verification
@@ -124,22 +137,54 @@ Two details the script exists for:
   commit can carry both — so "the previous release" is only ever right within one channel. A stable
   release therefore spans every beta since the last stable.
 - **The body is split by `<!-- tinycast:install -->`.** Everything above it is the changelog;
-  everything below is the Homebrew and quarantine text, which only a download page needs. The update
-  window cuts at that marker — see [features/updates.md](features/updates.md). Full PR URLs are
-  shortened to `#304`, which still autolinks on the web and fits a 460pt window.
+  everything below is the install text, which only a download page needs. The website's changelog
+  cuts at that marker in `website/src/lib/changelog.ts`. Full PR URLs are shortened to `#304`, which
+  still autolinks on the web.
 
 The Discord announcement carries the same changelog, truncated to fit Discord's component limit, and
 pings `@everyone`.
 
-### Homebrew tap automation
+### The bundle id handoff
 
-Each job's final step rewrites the `version` + `sha256` of its cask (`tinycast`, `tinycast@beta` or
-`tinycast-universal`) in the [`homebrew-tinycast`](https://github.com/abue-ammar/homebrew-tinycast) tap
-and pushes. It needs a `HOMEBREW_TAP_TOKEN` repo secret — a fine-grained PAT with **Contents:
-read/write** on the tap repo. Without the secret the step logs a warning and skips; the release still
-publishes. The `sed` is anchored to `^  version` / `^  sha256`, so a cask's two-space indent on those
-lines is load-bearing.
+Tinycast moved from `com.tinycast.app` (and `.beta`, `.dev`) to `com.abueammar.tinycast`, because
+another team holds the old App ID and iCloud needs one. A copy from before the move refuses any update
+whose bundle id differs from its own, and that check is in code already shipped. So until
+**2027-05-13** every release also publishes a handoff, built from the `TinycastHandoff` target:
 
-Both stable casks install `Tinycast.app` under `com.tinycast.app`, so they `conflicts_with` one
-another and Homebrew routes each Mac by `depends_on`: `tinycast` requires `arch: :arm64`, and
-`tinycast-universal` takes the Intel Macs.
+- **It wears the old id and the release's version**, so the old copy's checks pass, and it carries the
+  real app under `Contents/Helpers/`. `wrap-handoff.sh` embeds the stapled app, re-seals the handoff
+  and asserts its id and version; `package-handoff.sh` then notarizes, staples, zips and signs it.
+- **It is uploaded first, in its own call:** `Tinycast-<version>-Handoff.zip` in the build job,
+  `Tinycast-Universal-<version>-Handoff.zip` before the universal zip. An old copy takes the first zip
+  it can run; `ReleaseFeed` skips both for a copy that has moved.
+- **On launch it hands over and gets out of the way:** it records whether the old id was a login
+  item, unregisters it, swaps the app it carries into its own place, opens it and exits.
+  `BundleIdentifierMigration` then moves the preferences, folders and login item to the new id, and
+  repoints every saved path into the old folders. The user clicks Update and Relaunch once, then grants the macOS permissions again and
+  re-enters any AI API key or MCP secret: the Keychain asks before another id reads an item, and the
+  move must never ask.
+
+The casks in homebrew/cask still name the old id in `uninstall quit:` and `zap`, and need the new one
+after the first stable handoff release; the universal cask in the tap needs the same. On 2027-05-13
+the migration check fails, and the handoff goes with everything its row in
+[migrations.md](migrations.md) lists.
+
+### Homebrew casks
+
+`tinycast` and `tinycast@beta` are in [homebrew/cask](https://github.com/Homebrew/homebrew-cask),
+where Homebrew's autobump bot bumps each one after a release.
+
+`tinycast-universal` is the only cask left in the
+[`homebrew-tinycast`](https://github.com/abue-ammar/homebrew-tinycast) tap, and the `universal` job
+is the only job that touches it: its last step rewrites the cask's `version` + `sha256` and pushes.
+The tap's `tap_migrations.json` hands anyone who installed `tinycast` or `tinycast@beta` from the tap
+to homebrew/cask on `brew update`.
+
+The step needs a `HOMEBREW_TAP_TOKEN` repo secret — a fine-grained PAT with **Contents: read/write**
+on the tap repo. Without the secret the step logs a warning and skips; the release still publishes.
+The `sed` is anchored to `^  version` / `^  sha256`, so a cask's two-space indent on those lines is
+load-bearing.
+
+Both stable casks install `Tinycast.app` under `com.abueammar.tinycast`, so `tinycast-universal`
+declares `conflicts_with cask: "tinycast"`. `tinycast` requires `arch: :arm64`; `tinycast-universal`
+installs on any Mac.

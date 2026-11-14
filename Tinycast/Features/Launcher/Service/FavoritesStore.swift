@@ -1,17 +1,36 @@
 import Foundation
 
-/// Favorite apps as an ordered key list, pinned to the top while the search is empty.
 @MainActor
 @Observable
 final class FavoritesStore {
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
     private let key = "favoriteApps"
 
     private(set) var keys: [String]
     /// AppIndex includes this in its result key, invalidating a list when the pinning changes.
     private(set) var revision = 0
 
-    init() {
+    enum Item: Identifiable, Equatable, Sendable {
+        case entry(AppEntry)
+        case file(FileSearchResult)
+
+        var id: String {
+            switch self {
+            case .entry(let entry): entry.id
+            case .file(let file): "file-" + file.id
+            }
+        }
+
+        var key: String {
+            switch self {
+            case .entry(let entry): entry.preferenceKey
+            case .file(let file): file.favoriteKey
+            }
+        }
+    }
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         keys = defaults.stringArray(forKey: key) ?? []
     }
 
@@ -19,7 +38,19 @@ final class FavoritesStore {
 
     func isFavorite(_ app: AppEntry) -> Bool { keys.contains(key(for: app)) }
 
-    /// Replace the whole favorites list at once (used when importing a settings backup).
+    func isFavorite(_ file: FileSearchResult) -> Bool { keys.contains(file.favoriteKey) }
+
+    func files(homeDirectory: URL) -> [FileSearchResult] {
+        keys.compactMap { FileSearchResult(favoriteKey: $0, homeDirectory: homeDirectory) }
+    }
+
+    func orderedItems(entries: [AppEntry], files: [FileSearchResult]) -> [Item] {
+        guard !keys.isEmpty else { return [] }
+        let items = entries.map(Item.entry) + files.map(Item.file)
+        let byKey = Dictionary(items.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        return keys.compactMap { byKey[$0] }
+    }
+
     func replace(keys newKeys: [String]) {
         keys = newKeys
         commit()
@@ -34,11 +65,18 @@ final class FavoritesStore {
     }
 
     func toggle(_ app: AppEntry) {
-        let k = key(for: app)
-        if let index = keys.firstIndex(of: k) {
+        toggle(key: key(for: app))
+    }
+
+    func toggle(_ file: FileSearchResult) {
+        toggle(key: file.favoriteKey)
+    }
+
+    private func toggle(key: String) {
+        if let index = keys.firstIndex(of: key) {
             keys.remove(at: index)
         } else {
-            keys.append(k)
+            keys.append(key)
         }
         commit()
     }

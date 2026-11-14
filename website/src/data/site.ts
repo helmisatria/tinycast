@@ -3,13 +3,15 @@
 
 // The page title and meta description, shared by the layout and /llms.txt. Google truncates a
 // description near 160 characters, so `summary` is written to land under it rather than be cut.
-export const pageTitle = "Tinycast: a free, native launcher for macOS";
+export const pageTitle =
+  "Tinycast: a native macOS launcher for everyday productivity";
 export const summary =
-  "A free, open source macOS launcher with app search, clipboard history, snippets, custom commands, window management, your own AI keys and Raycast extensions.";
+  "A lightweight, open source macOS launcher with app search, clipboard history, snippets, window management, your own AI keys and Raycast extensions.";
 
 export const site = {
   name: "Tinycast",
   repo: "https://github.com/abue-ammar/tinycast",
+  intelTap: "https://github.com/abue-ammar/homebrew-tinycast",
   url: "https://tinycast.dev",
   // The R2 bucket behind cdn.tinycast.dev. Anything over Workers' 25 MiB
   // per-asset cap lives here instead of `public/` — see website/README.md.
@@ -27,10 +29,16 @@ export const site = {
 
 // The hero, in as few words as possible — headline plus one punchy line.
 export const hero = {
-  // One entry per line: the break falls between the two sentences at every
-  // width. The last line ends bare, because the hero draws a caret after it.
-  headlineLines: ["Everything on your Mac.", "One keystroke away"],
-  sub: "A small, native launcher for your apps, clipboard, snippets and windows. Free and open source, with no account and no telemetry.",
+  // Two lines, the break between the two sentences at every width. The first
+  // line opens on each of `swap` in turn, once, and settles on the first, so it
+  // ends as written; none is wider than "Everything", so the line never rewraps.
+  // The second line ends bare, because the hero draws a caret after it.
+  headline: {
+    swap: ["Everything", "Every app", "Every file", "Every clip", "Every note"],
+    rest: "on your Mac.",
+    second: "One keystroke away",
+  },
+  sub: "A native macOS launcher for everyday productivity. Lightweight and open source, with no account and no telemetry.",
   // The mono line under the buttons. Each fact is stated in the docs.
   facts: ["Under 100 MB of memory", "Zero dependencies", "Free & open source"],
 } as const;
@@ -42,11 +50,9 @@ export const nav = [
   { label: "Changelog", href: "/changelog" },
 ] as const;
 
-// The hero's two lines. Every other channel lives in docs/install.md, which is
+// The hero's line. Every other channel lives in docs/install.md, which is
 // where both install CTAs point.
-export const brewTrustCommand = "brew trust --tap abue-ammar/tinycast";
-export const brewInstallCommand =
-  "brew install --cask abue-ammar/tinycast/tinycast";
+export const brewInstallCommand = "brew install --cask tinycast";
 
 // The logo wall under the hero, in render order. The track starts at the first
 // entry with the left edge under the mask, so the two least-known names lead
@@ -69,3 +75,43 @@ export const companies = [
 ] as const;
 
 export type Company = (typeof companies)[number];
+
+export type Badge = {
+  href: string;
+  alt: string;
+  src: string;
+  darkSrc?: string;
+  width: number;
+  height: number;
+  isInvertedInDark?: boolean;
+};
+
+// The images are copies in public/badges, never hotlinks, so the page still
+// makes no request to a third party.
+export const badges: Badge[] = [
+  {
+    href: "https://www.star-history.com/abue-ammar/tinycast",
+    alt: "GitHub Trending Repository of the Day",
+    src: "/badges/trending-light.svg",
+    darkSrc: "/badges/trending-dark.svg",
+    width: 270,
+    height: 64,
+  },
+  {
+    href: "https://usefulshelf.co/apps/tinycast?utm_source=tinycast.dev&utm_medium=referral&utm_campaign=badge&utm_content=light",
+    alt: "Featured on UsefulShelf",
+    src: "/badges/usefulshelf.svg",
+    darkSrc: "/badges/usefulshelf-lime.svg",
+    width: 248,
+    height: 66,
+  },
+  {
+    href: "https://www.trymacapps.com/app/tinycast",
+    alt: "Featured on TryMacApps",
+    src: "/badges/trymacapps.png",
+    width: 200,
+    height: 67,
+    // Dark ink on a transparent ground, so it would vanish on the dark canvas.
+    isInvertedInDark: true,
+  },
+];

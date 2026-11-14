@@ -5,9 +5,7 @@ import Observation
 @MainActor
 @Observable
 final class AIChatSurfacesState {
-    /// The palette's conversation.
     private(set) var quickAI: AIChatState
-    /// The AI Chat window's conversation.
     private(set) var window: AIChatState
     /// Window conversations left mid-reply; each saves itself when its reply ends.
     private var answeringElsewhere: [UUID: AIChatState] = [:]
@@ -66,10 +64,31 @@ final class AIChatSurfacesState {
         return true
     }
 
-    /// An empty chat is already new; replacing it would only drop what is staged in it.
+    /// An empty chat is already new, so it only drops a preset picked in it; staged files stay.
     func newWindowChat() {
-        guard !window.session.messages.isEmpty else { return }
-        show(makeState())
+        guard window.session.messages.isEmpty else {
+            show(makeState())
+            return
+        }
+        if window.session.preset != nil { window.usePreset(nil) }
+    }
+
+    func applyWindowOpenPolicy(opensTo: AIOpensTo, newAfter: AINewChatAfter, now: Date = Date()) {
+        guard !window.isStreaming else { return }
+        guard window.draft.isEmpty, window.pendingAttachments.isEmpty else { return }
+        let hasTranscript = !window.session.messages.isEmpty
+        guard hasTranscript || window.session.preset == nil else { return }
+        let recent = history.conversations.first
+        let decision = AIConversationOpenPolicy.decide(
+            opensTo: opensTo, newAfter: newAfter,
+            lastActiveAt: hasTranscript ? window.session.updatedAt : recent?.updatedAt, now: now)
+        switch decision {
+        case .resume:
+            guard !hasTranscript, let recent, holder(of: recent.id) !== quickAI else { return }
+            openInWindow(id: recent.id)
+        case .startNew:
+            newWindowChat()
+        }
     }
 
     /// Quick AI's conversation moves over whole, reply and staged files included.
@@ -106,6 +125,10 @@ final class AIChatSurfacesState {
     }
 
     // MARK: - Every surface
+
+    func followPreset(id: UUID, to preset: ChatPreset?) {
+        for state in live { state.followPreset(id: id, to: preset) }
+    }
 
     func delete(id: UUID) {
         (holder(of: id) ?? window).delete(id: id)

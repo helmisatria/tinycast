@@ -5,9 +5,6 @@ final class ClipboardManager {
     /// Marker we attach to the pasteboard when *we* write to it, so polling ignores our own pastes.
     static let internalType = NSPasteboard.PasteboardType("com.tinycast.internal")
 
-    /// Longest text captured; bigger copies are skipped, truncation losing the tail.
-    static let maxTextLength = 32_000
-
     /// Markers put on secret copies by password managers, browsers and the OS.
     static let sensitiveTypes: Set<NSPasteboard.PasteboardType> = [
         .init("org.nspasteboard.ConcealedType"),
@@ -21,6 +18,7 @@ final class ClipboardManager {
     private var sessionTokens: [NotificationToken] = []
     private var lastChangeCount = 0
     private var isCapturing = false
+    private var isCapturePaused = false
 
     init(store: ClipboardStore, settings: AppSettings) {
         self.store = store
@@ -39,7 +37,6 @@ final class ClipboardManager {
         startPolling()
     }
 
-    /// Turning the feature off: the poller, the observers and the drain all go with it.
     func stop() {
         isCapturing = false
         sessionTokens = []
@@ -91,6 +88,16 @@ final class ClipboardManager {
         poll()
     }
 
+    /// For a ⌘C Tinycast sends itself, whose copy is read and restored but never recorded.
+    func pauseCapture() {
+        prepareForTinycastPasteboardMutation()
+        isCapturePaused = true
+    }
+
+    func resumeCapture() {
+        isCapturePaused = false
+    }
+
     // Load-bearing: a mismatched count means a foreign write the next poll must still see.
     func synchronizeAfterTinycastPasteboardMutation(changeCount: Int) {
         guard NSPasteboard.general.changeCount == changeCount else { return }
@@ -104,6 +111,16 @@ final class ClipboardManager {
     nonisolated static let volatileRoots = [
         "/tmp/", "/var/tmp/", "/var/folders/", NSHomeDirectory() + "/Library/Caches/"
     ]
+
+    /// Another app's container is closed to us, so a copy it stages there beside pixels is scratch.
+    nonisolated static func volatileRoots(
+        on pasteboard: NSPasteboard, copiedFrom bundleID: String?,
+        containers: String = NSHomeDirectory() + "/Library/Containers/",
+        roots: [String] = volatileRoots
+    ) -> [String] {
+        guard let bundleID, pasteboard.availableType(from: [.png, .tiff]) != nil else { return roots }
+        return roots + [containers + bundleID + "/"]
+    }
 
     /// Both parameters are injected environment facts, so a harness can drive its own scratch.
     nonisolated static func fileURLs(
@@ -128,7 +145,7 @@ final class ClipboardManager {
 
     private func poll() {
         let pb = NSPasteboard.general
-        guard pb.changeCount != lastChangeCount else { return }
+        guard !isCapturePaused, pb.changeCount != lastChangeCount else { return }
         lastChangeCount = pb.changeCount
 
         if pb.types?.contains(Self.internalType) == true { return }
@@ -141,7 +158,8 @@ final class ClipboardManager {
         if let sourceBundleID, settings.clipboardDisabledApps.contains(sourceBundleID) { return }
 
         // Ahead of the text branch: Finder puts the file's *name* on `.string` beside its URL.
-        if let paths = Self.fileURLs(on: pb) {
+        let roots = Self.volatileRoots(on: pb, copiedFrom: sourceBundleID)
+        if let paths = Self.fileURLs(on: pb, volatileRoots: roots) {
             store.addFiles(paths, sourceBundleID: sourceBundleID)
             return
         }
@@ -149,7 +167,7 @@ final class ClipboardManager {
         if let text = pb.string(forType: .string),
             !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
-            guard text.count <= Self.maxTextLength else { return }
+            guard text.count <= ClipboardStore.maxTextLength else { return }
             store.addText(text, sourceBundleID: sourceBundleID)
             return
         }
@@ -157,6 +175,7 @@ final class ClipboardManager {
         if let type = pb.availableType(from: [.png, .tiff]), let data = pb.data(forType: type) {
             let isPNG = type == .png
             let store = store
+            let capture = store.captureGeneration
             // A big TIFF→PNG re-encode can take 100ms+, so keep the poll off that path.
             Task.detached(priority: .utility) {
                 let png =
@@ -164,8 +183,26 @@ final class ClipboardManager {
                     ? data
                     : NSBitmapImageRep(data: data)?.representation(using: .png, properties: [:])
                 guard let png else { return }
-                await store.addImage(png, sourceBundleID: sourceBundleID)
+                await store.addImage(png, sourceBundleID: sourceBundleID, capture: capture)
             }
+            return
         }
+
+        guard let text = Self.plainText(fromRichTextOn: pb),
+            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            text.count <= ClipboardStore.maxTextLength
+        else { return }
+        store.addText(text, sourceBundleID: sourceBundleID)
+    }
+
+    private static let maxImportedHTMLBytes = 256 * 1024
+
+    static func plainText(fromRichTextOn pasteboard: NSPasteboard) -> String? {
+        if let rtf = pasteboard.data(forType: .rtf) {
+            return NSAttributedString(rtf: rtf, documentAttributes: nil)?.string
+        }
+        guard let html = pasteboard.data(forType: .html), html.count <= maxImportedHTMLBytes
+        else { return nil }
+        return NSAttributedString(html: html, documentAttributes: nil)?.string
     }
 }

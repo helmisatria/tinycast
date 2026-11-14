@@ -12,6 +12,8 @@ final class ExtensionNodeShims: @unchecked Sendable {
     private static let openableFlags =
         O_RDONLY | O_WRONLY | O_RDWR | O_APPEND | O_CREAT | O_TRUNC | O_EXCL | O_NOFOLLOW
     private static let openFileLimit = 256
+    /// Non-blocking, so probing a FIFO for its errno cannot hang the JS queue waiting on a writer.
+    private static let probeFlags = O_RDONLY | O_NONBLOCK | O_CLOEXEC
 
     func closeFiles() {
         for handle in fileHandles.values { try? handle.close() }
@@ -56,6 +58,12 @@ final class ExtensionNodeShims: @unchecked Sendable {
         case "proc": return try process(method: method, arguments: arguments)
         case "crypto": return try crypto(method: method, arguments: arguments)
         case "zlib": return try compression(method: method, arguments: arguments)
+        case "atomics" where method == "wait":
+            guard let milliseconds = (arguments.first as? NSNumber)?.doubleValue,
+                milliseconds.isFinite, milliseconds >= 0
+            else { throw ShimError.failed("Atomics.wait needs a finite timeout.", "EINVAL") }
+            Thread.sleep(forTimeInterval: milliseconds / 1_000)
+            return nil
         default: throw ShimError.failed("Unknown host module '\(api)'.", "ENOSYS")
         }
     }
@@ -88,6 +96,7 @@ final class ExtensionNodeShims: @unchecked Sendable {
             }
             return Double(statistics.free_count) * Double(getpagesize())
         }
+        if method == "networkInterfaces" { return try networkInterfaces() }
         guard method == "cpus" else {
             throw ShimError.failed("os.\(method) is not supported.", "ENOSYS")
         }
@@ -127,6 +136,81 @@ final class ExtensionNodeShims: @unchecked Sendable {
         }
     }
 
+    /// Node's `uv_interface_addresses` filter: up, running, IPv4 or IPv6, in `getifaddrs` order.
+    private func networkInterfaces() throws -> [[String: Any]] {
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0 else { throw fileError("getifaddrs") }
+        defer { freeifaddrs(list) }
+        guard let first = list else { return [] }
+        return try sequence(first: first) { $0.pointee.ifa_next }.compactMap {
+            try interfaceAddress($0.pointee)
+        }
+    }
+
+    /// A hardware address identifies the Mac itself, so every record reports Node's loopback MAC.
+    private func interfaceAddress(_ entry: ifaddrs) throws -> [String: Any]? {
+        let flags = Int32(bitPattern: entry.ifa_flags)
+        guard flags & IFF_UP != 0, flags & IFF_RUNNING != 0, let socketAddress = entry.ifa_addr else {
+            return nil
+        }
+        let family = Int32(socketAddress.pointee.sa_family)
+        guard family == AF_INET || family == AF_INET6 else { return nil }
+
+        let address = try presentation(Self.addressBytes(socketAddress, family: family), family: family)
+        let netmask = Self.addressBytes(entry.ifa_netmask, family: family)
+        let netmaskText = try presentation(netmask, family: family)
+        var record: [String: Any] = [
+            "name": String(cString: entry.ifa_name),
+            "address": address,
+            "netmask": netmaskText,
+            "family": family == AF_INET ? "IPv4" : "IPv6",
+            "mac": "00:00:00:00:00:00",
+            "internal": flags & IFF_LOOPBACK != 0,
+            "cidr": Self.prefixLength(netmask).map { "\(address)/\($0)" } ?? NSNull()
+        ]
+        if family == AF_INET6 {
+            record["scopeid"] = socketAddress.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+                $0.pointee.sin6_scope_id
+            }
+        }
+        return record
+    }
+
+    /// A netmask's `sockaddr` may be trimmed to its significant bytes, so copy no further than `sa_len`.
+    private static func addressBytes(_ socketAddress: UnsafePointer<sockaddr>?, family: Int32) -> [UInt8] {
+        var storage = sockaddr_storage()
+        if let socketAddress {
+            let length = min(Int(socketAddress.pointee.sa_len), MemoryLayout<sockaddr_storage>.size)
+            withUnsafeMutableBytes(of: &storage) {
+                $0.copyMemory(from: UnsafeRawBufferPointer(start: socketAddress, count: length))
+            }
+        }
+        return withUnsafeBytes(of: storage) { raw in
+            family == AF_INET
+                ? withUnsafeBytes(of: raw.load(as: sockaddr_in.self).sin_addr) { Array($0) }
+                : withUnsafeBytes(of: raw.load(as: sockaddr_in6.self).sin6_addr) { Array($0) }
+        }
+    }
+
+    private func presentation(_ bytes: [UInt8], family: Int32) throws -> String {
+        var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+        return try buffer.withUnsafeMutableBufferPointer { text in
+            guard let written = inet_ntop(family, bytes, text.baseAddress, socklen_t(text.count)) else {
+                throw fileError("inet_ntop")
+            }
+            return String(cString: written)
+        }
+    }
+
+    /// Node reports a null `cidr` when the netmask's bits are not one contiguous run.
+    private static func prefixLength(_ netmask: [UInt8]) -> Int? {
+        let ones = netmask.reduce(0) { $0 + $1.nonzeroBitCount }
+        let contiguous = netmask.indices.map {
+            UInt8(truncatingIfNeeded: 0xFF00 >> min(8, max(0, ones - $0 * 8)))
+        }
+        return contiguous == netmask ? ones : nil
+    }
+
     // MARK: - fs
 
     private func filesystem(method: String, arguments: [Any]) throws -> Any? {
@@ -157,7 +241,7 @@ final class ExtensionNodeShims: @unchecked Sendable {
         case "readFile":
             let target = try path(0)
             guard let data = fileManager.contents(atPath: target) else {
-                throw ShimError.noEntry(target, "open")
+                throw readError("open", target)
             }
             return data.base64EncodedString()
 
@@ -182,7 +266,7 @@ final class ExtensionNodeShims: @unchecked Sendable {
             let offset = max(0, (arguments[safe: 1] as? NSNumber)?.intValue ?? 0)
             let count = max(0, (arguments[safe: 2] as? NSNumber)?.intValue ?? 0)
             guard let handle = FileHandle(forReadingAtPath: target) else {
-                throw ShimError.noEntry(target, "open")
+                throw readError("open", target)
             }
             defer { try? handle.close() }
             try handle.seek(toOffset: UInt64(offset))
@@ -199,7 +283,7 @@ final class ExtensionNodeShims: @unchecked Sendable {
         case "readdir":
             let target = try path(0)
             guard let names = try? fileManager.contentsOfDirectory(atPath: target) else {
-                throw ShimError.noEntry(target, "scandir")
+                throw readError("scandir", target)
             }
             return names.map { name -> [String: Any] in
                 let child = (target as NSString).appendingPathComponent(name)
@@ -218,9 +302,29 @@ final class ExtensionNodeShims: @unchecked Sendable {
         case "mkdir":
             let target = try path(0)
             let recursive = arguments[safe: 1] as? Bool ?? false
-            try fileManager.createDirectory(
-                atPath: target, withIntermediateDirectories: recursive)
-            return recursive ? target : nil
+            if recursive {
+                try fileManager.createDirectory(atPath: target, withIntermediateDirectories: true)
+                return target
+            }
+            guard Darwin.mkdir(target, 0o777) == 0 else { throw fileError("mkdir", target) }
+            return nil
+
+        case "utimes":
+            let target = try path(0)
+            let times = try (1...2).map { index -> timeval in
+                guard let seconds = (arguments[safe: index] as? NSNumber)?.doubleValue,
+                    seconds >= Double(Int.min), seconds < Double(Int.max)
+                else { throw ShimError.failed("fs.utimes needs valid timestamps.", "EINVAL") }
+                let wholeSeconds = seconds.rounded(.down)
+                let microseconds = Int(((seconds - wholeSeconds) * 1_000_000).rounded())
+                return timeval(
+                    tv_sec: Int(wholeSeconds) + microseconds / 1_000_000,
+                    tv_usec: Int32(microseconds % 1_000_000))
+            }
+            guard times.withUnsafeBufferPointer({ Darwin.utimes(target, $0.baseAddress) }) == 0 else {
+                throw fileError("utimes", target)
+            }
+            return nil
 
         case "remove":
             let target = try path(0)
@@ -338,6 +442,34 @@ final class ExtensionNodeShims: @unchecked Sendable {
             "\(name): \(String(cString: strerror(code))), \(syscall)\(target)", name)
     }
 
+    /// A nil FileManager read hides the errno, so reprobe the path and report it in Node's wording.
+    private func readError(_ syscall: String, _ path: String) -> ShimError {
+        let descriptor = Darwin.open(path, Self.probeFlags)
+        guard descriptor >= 0 else { return pathError(syscall, path) }
+        defer { Darwin.close(descriptor) }
+        var status = Darwin.stat()
+        let isDirectory =
+            Darwin.fstat(descriptor, &status) == 0 && status.st_mode & S_IFMT == S_IFDIR
+        if syscall == "scandir", !isDirectory {
+            return .failed("ENOTDIR: not a directory, \(syscall) '\(path)'", "ENOTDIR")
+        }
+        if syscall == "open", isDirectory {
+            return .failed(
+                "EISDIR: illegal operation on a directory, \(syscall) '\(path)'", "EISDIR")
+        }
+        return .noEntry(path, syscall)
+    }
+
+    private func pathError(_ syscall: String, _ path: String) -> ShimError {
+        switch errno {
+        case ENOENT: .noEntry(path, syscall)
+        case EPERM: .failed("EPERM: operation not permitted, \(syscall) '\(path)'", "EPERM")
+        case EACCES: .failed("EACCES: permission denied, \(syscall) '\(path)'", "EACCES")
+        case ENOTDIR: .failed("ENOTDIR: not a directory, \(syscall) '\(path)'", "ENOTDIR")
+        default: fileError(syscall, path)
+        }
+    }
+
     private static let errorNames: [Int32: String] = [
         EACCES: "EACCES", EBADF: "EBADF", EEXIST: "EEXIST", EISDIR: "EISDIR", EMFILE: "EMFILE",
         EINVAL: "EINVAL", ENOENT: "ENOENT", ENOSPC: "ENOSPC", ENOTDIR: "ENOTDIR", EPERM: "EPERM",
@@ -345,27 +477,26 @@ final class ExtensionNodeShims: @unchecked Sendable {
     ]
 
     private func stat(path: String, followLinks: Bool) throws -> [String: Any] {
-        let attributes =
-            followLinks
-            ? try? fileManager.attributesOfItem(
-                atPath: URL(fileURLWithPath: path).resolvingSymlinksInPath().path)
-            : try? fileManager.attributesOfItem(atPath: path)
-        guard let attributes else { throw ShimError.noEntry(path, "stat") }
+        var status = Darwin.stat()
+        let flags = followLinks ? 0 : AT_SYMLINK_NOFOLLOW
+        guard fstatat(AT_FDCWD, path, &status, flags) == 0 else { throw pathError("stat", path) }
 
-        let type = attributes[.type] as? FileAttributeType
-        func milliseconds(_ key: FileAttributeKey) -> Double {
-            ((attributes[key] as? Date)?.timeIntervalSince1970 ?? 0) * 1000
+        let type = status.st_mode & S_IFMT
+        func milliseconds(_ time: timespec) -> Double {
+            Double(time.tv_sec) * 1000 + Double(time.tv_nsec) / 1_000_000
         }
         return [
-            "size": (attributes[.size] as? NSNumber)?.doubleValue ?? 0,
-            "mode": (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0,
-            "mtimeMs": milliseconds(.modificationDate),
-            "atimeMs": milliseconds(.modificationDate),
-            "ctimeMs": milliseconds(.creationDate),
-            "birthtimeMs": milliseconds(.creationDate),
-            "_isFile": type == .typeRegular,
-            "_isDirectory": type == .typeDirectory,
-            "_isSymbolicLink": type == .typeSymbolicLink
+            "size": Double(status.st_size),
+            "mode": Int(status.st_mode),
+            "uid": Int(status.st_uid),
+            "gid": Int(status.st_gid),
+            "mtimeMs": milliseconds(status.st_mtimespec),
+            "atimeMs": milliseconds(status.st_atimespec),
+            "ctimeMs": milliseconds(status.st_ctimespec),
+            "birthtimeMs": milliseconds(status.st_birthtimespec),
+            "_isFile": type == S_IFREG,
+            "_isDirectory": type == S_IFDIR,
+            "_isSymbolicLink": type == S_IFLNK
         ]
     }
 
@@ -419,13 +550,18 @@ final class ExtensionNodeShims: @unchecked Sendable {
             task.environment = ProcessInfo.processInfo.environment
         }
 
-        let stdout = Pipe()
-        let stderr = Pipe()
-        task.standardOutput = stdout
-        task.standardError = stderr
+        let redirects = stdioRedirects(spec["stdio"])
+        let stdout = redirects[1] == nil ? Pipe() : nil
+        let stderr = redirects[2] == nil ? Pipe() : nil
+        task.standardOutput = redirects[1] ?? stdout
+        task.standardError = redirects[2] ?? stderr
         let input = (spec["input"] as? String).flatMap { Data(base64Encoded: $0) }
-        let stdin = input.map { _ in Pipe() }
-        if let stdin { task.standardInput = stdin }
+        let stdin = redirects[0] == nil ? input.map { _ in Pipe() } : nil
+        if let source = redirects[0] {
+            task.standardInput = source
+        } else if let stdin {
+            task.standardInput = stdin
+        }
 
         let exit: ProcessExit
         do {
@@ -435,6 +571,13 @@ final class ExtensionNodeShims: @unchecked Sendable {
         }
         if let input, let stdin { feed(input, to: stdin) }
         return ExtensionAsyncProcess.Child(task: task, exit: exit, stdout: stdout, stderr: stderr)
+    }
+
+    private func stdioRedirects(_ value: Any?) -> [FileHandle?] {
+        let entries = value as? [Any] ?? []
+        return (0..<3).map { index in
+            (entries[safe: index] as? NSNumber).flatMap { fileHandles[$0.int32Value] }
+        }
     }
 
     /// A pipe holds 64 KB, so a larger input written before the child reads it would never finish.
@@ -508,6 +651,26 @@ final class ExtensionNodeShims: @unchecked Sendable {
             return try crypt(
                 mode: mode, decrypt: decrypt, key: key, iv: iv, data: data, padding: padding
             ).base64EncodedString()
+
+        case "gcmSeal":
+            let key = Data(base64Encoded: arguments[safe: 0] as? String ?? "") ?? Data()
+            let iv = Data(base64Encoded: arguments[safe: 1] as? String ?? "") ?? Data()
+            let data = Data(base64Encoded: arguments[safe: 2] as? String ?? "") ?? Data()
+            let aad = Data(base64Encoded: arguments[safe: 3] as? String ?? "") ?? Data()
+            let box = try sealGCM(key: key, iv: iv, data: data, aad: aad)
+            return [
+                "ciphertext": box.ciphertext.base64EncodedString(),
+                "tag": box.tag.base64EncodedString()
+            ]
+
+        case "gcmOpen":
+            let key = Data(base64Encoded: arguments[safe: 0] as? String ?? "") ?? Data()
+            let iv = Data(base64Encoded: arguments[safe: 1] as? String ?? "") ?? Data()
+            let data = Data(base64Encoded: arguments[safe: 2] as? String ?? "") ?? Data()
+            let aad = Data(base64Encoded: arguments[safe: 3] as? String ?? "") ?? Data()
+            let tag = Data(base64Encoded: arguments[safe: 4] as? String ?? "") ?? Data()
+            return try openGCM(key: key, iv: iv, data: data, aad: aad, tag: tag)?
+                .base64EncodedString()
 
         default:
             throw ShimError.failed("crypto.\(method) is not supported.", "ENOSYS")
@@ -633,6 +796,21 @@ final class ExtensionNodeShims: @unchecked Sendable {
             throw ShimError.failed("error:1C800064:Provider routines::bad decrypt", "ERR_OSSL_BAD_DECRYPT")
         }
         return output.dropLast(padLength)
+    }
+
+    private func sealGCM(key: Data, iv: Data, data: Data, aad: Data) throws -> AES.GCM.SealedBox {
+        try AES.GCM.seal(
+            data, using: SymmetricKey(data: key), nonce: AES.GCM.Nonce(data: iv), authenticating: aad)
+    }
+
+    /// Returns `nil` when the tag does not verify, so the runtime can raise Node's own error.
+    private func openGCM(key: Data, iv: Data, data: Data, aad: Data, tag: Data) throws -> Data? {
+        let box = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: iv), ciphertext: data, tag: tag)
+        do {
+            return try AES.GCM.open(box, using: SymmetricKey(data: key), authenticating: aad)
+        } catch CryptoKitError.authenticationFailure {
+            return nil
+        }
     }
 
     // MARK: - zlib

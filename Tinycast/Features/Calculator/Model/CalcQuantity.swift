@@ -1,6 +1,5 @@
 import Foundation
 
-/// Typed arithmetic for measurements and currencies.
 enum CalcQuantity {
     static func evaluate(
         _ tokens: [CalcToken], query: String, rates: CurrencyRates?, region: String? = nil,
@@ -25,15 +24,17 @@ enum CalcQuantity {
                 parser.operationCount > 0 || (!preserveStandaloneUnit && tokens.count > 1)
             else { return nil }
             return CalcResult(
-                expression: CalcFormatter.expression(query), sourceBadge: "Expression",
-                targetBadge: "Result", payload: .number(value.effective))
+                expression: CalcFormatter.expression(query), sourceBadge: String(localized: "Expression"),
+                targetBadge: String(localized: "Result"), payload: .number(value.effective))
         }
         if value.isBoolean {
             guard split.targetName == nil else { return nil }
             let text = value.amount == 0 ? "false" : "true"
             return CalcResult(
-                expression: expressionText(split.expressionTokens), sourceBadge: "Expression",
-                targetBadge: "Boolean", payload: .value(display: text, copyText: text))
+                expression: expressionText(split.expressionTokens),
+                sourceBadge: String(localized: "Expression"), targetBadge: String(localized: "Boolean"),
+                payload: .value(display: text, copyText: text),
+                canChain: false)
         }
 
         if parser.usedCurrency && !parser.usedCurrencyRate {
@@ -41,12 +42,12 @@ enum CalcQuantity {
                 return CalcResult(
                     expression: query,
                     payload: .error(
-                        message: "Exchange rates unavailable — check your connection."))
+                        message: String(localized: "Exchange rates unavailable — check your connection.")))
             }
             if let code = parser.currencyCodes.first(where: { rates.rate(for: $0) == nil }) {
                 return CalcResult(
                     expression: query,
-                    payload: .error(message: "No exchange rate for \(code)."))
+                    payload: .error(message: String(localized: "No exchange rate for \(code).")))
             }
         }
 
@@ -58,8 +59,21 @@ enum CalcQuantity {
                 let text = CalcFormatter.timespan(seconds)
                 return CalcResult(
                     expression: expressionText(split.expressionTokens),
-                    sourceBadge: parser.operationCount == 0 ? unit.name : "Expression",
-                    targetBadge: "Timespan", payload: .value(display: text, copyText: text))
+                    sourceBadge: parser.operationCount == 0 ? unit.name : String(localized: "Expression"),
+                    targetBadge: String(localized: "Timespan"),
+                    payload: .value(display: text, copyText: text))
+            }
+            if let pair = CalcMixedUnits.pair(targetName) {
+                guard case .unit(let unit) = value.kind, unit.category == pair.larger.category,
+                    let text = CalcMixedUnits.format(value.amount, from: unit, into: pair)
+                else { return nil }
+                return CalcResult(
+                    expression: expressionText(split.expressionTokens),
+                    sourceBadge: parser.operationCount == 0 ? unit.name : String(localized: "Expression"),
+                    targetBadge: unit.category == .time
+                        ? String(localized: "Timespan")
+                        : String(localized: "\(pair.larger.name) and \(pair.smaller.name)"),
+                    payload: .value(display: text, copyText: text))
             }
             guard let output = parser.converted(value, to: targetName) else {
                 guard let message = parser.issue else { return nil }
@@ -73,7 +87,7 @@ enum CalcQuantity {
             guard parser.operationCount > 0 else { return nil }
             return CalcResult(
                 expression: expressionText(split.expressionTokens),
-                sourceBadge: "Expression", targetBadge: "Result",
+                sourceBadge: String(localized: "Expression"), targetBadge: String(localized: "Result"),
                 payload: .number(value.effective))
         case .unit(let unit):
             // A bare `50cm` auto-converts below; with an operator the typed units are kept.
@@ -85,6 +99,12 @@ enum CalcQuantity {
             }
             guard parser.operationCount > 0 || parser.dimensionCount > 1 || preserveStandaloneUnit else {
                 return nil
+            }
+            if !preserveStandaloneUnit,
+                let rate = regionRate(
+                    split.expressionTokens, unit: unit, value: value, parser: &parser, region: region)
+            {
+                return rate
             }
             return measurementResult(
                 value.amount, unit: unit, expression: expressionText(split.expressionTokens))
@@ -103,6 +123,30 @@ enum CalcQuantity {
             }
             return currencyResult(
                 output, definition: target, expression: expression, sourceBadge: definition.name)
+        }
+    }
+
+    /// `5 usd per gallon` names no target, so its currency becomes the Mac's own and the unit stays.
+    private static func regionRate(
+        _ tokens: [CalcToken], unit: UnitDef, value: CalcValue, parser: inout CalcExpressionParser,
+        region: String?
+    ) -> CalcResult? {
+        guard let source = unit.currency, tokens.count > 3, tokens[2] == .op(.divide),
+            unit.symbol.hasPrefix(source.code + "/"), isAmountOf(tokens[0], tokens[1]),
+            CalcUnitExpression.parse(Array(tokens[3...])) != nil,
+            let target = regionTarget(region, from: source)
+        else { return nil }
+        let rest = unit.symbol.dropFirst(source.code.count + 1)
+        guard let converted = parser.converted(value, to: "\(target.code) / \(rest)") else { return nil }
+        return convertedResult(converted, expression: expressionText(tokens))
+    }
+
+    private static func isAmountOf(_ first: CalcToken, _ second: CalcToken) -> Bool {
+        switch (first, second) {
+        case (.number, .ident(let name)), (.ident(let name), .number):
+            return CalcUnits.byName[name] == nil && CalcCurrency.byName[name] != nil
+        default:
+            return false
         }
     }
 
@@ -132,21 +176,19 @@ enum CalcQuantity {
     ) -> CalcResult {
         CalcResult(
             expression: expression,
-            sourceBadge: "Expression", targetBadge: unit.name,
+            sourceBadge: String(localized: "Expression"), targetBadge: unit.name,
             payload: .measurement(amount, unit: unit))
     }
 
     private static func currencyResult(
         _ amount: Double, definition: CurrencyDef, expression: String,
-        sourceBadge: String = "Expression"
+        sourceBadge: String = String(localized: "Expression")
     ) -> CalcResult {
-        let formatted = CalcFormatter.currency(amount)
-        return CalcResult(
+        CalcResult(
             expression: expression,
             sourceBadge: sourceBadge, targetBadge: definition.name,
-            payload: .value(
-                display: "\(CalcFormatter.grouped(formatted)) \(definition.code)",
-                copyText: "\(formatted) \(definition.code)"))
+            payload: .money(amount, code: definition.code),
+            isCurrency: true)
     }
 
     static func convertUnit(_ amount: Double, from: UnitDef, to: UnitDef) -> Double {
@@ -169,21 +211,31 @@ enum CalcQuantity {
             if tokens[index] == .op(.close) { depth -= 1 }
             guard depth == 0, index + 1 < end, CalcUnits.isConnector(tokens[index]) else { continue }
             if index + 2 == end, case .ident(let name) = tokens[index + 1] { return (index, name) }
+            if index + 4 == end || index + 3 == end {
+                let pair = targetName(tokens[(index + 1)..<end])
+                if CalcMixedUnits.pair(pair) != nil { return (index, pair) }
+            }
             let target = Array(tokens[(index + 1)..<end])
             guard CalcUnitExpression.parse(target) != nil else { continue }
-            return (
-                index,
-                target.map { token in
-                    switch token {
-                    case .ident(let name): return name
-                    case .op(let op): return String(op.rawValue)
-                    case .number(let value): return CalcFormatter.copyText(value)
-                    default: return ""
-                    }
-                }.joined(separator: " ")
-            )
+            return (index, targetName(tokens[(index + 1)..<end]))
         }
         return nil
+    }
+
+    static func conversionPrefix(_ tokens: [CalcToken], at start: Int) -> (name: String, end: Int)? {
+        guard let target = CalcUnitExpression.prefix(tokens, at: start) else { return nil }
+        return (targetName(tokens[start..<target.end]), target.end)
+    }
+
+    private static func targetName(_ tokens: ArraySlice<CalcToken>) -> String {
+        tokens.map { token in
+            switch token {
+            case .ident(let name): return name
+            case .op(let op): return String(op.rawValue)
+            case .number(let value): return CalcFormatter.copyText(value)
+            default: return ""
+            }
+        }.joined(separator: " ")
     }
 
     private static func isSimpleConversionSource(_ tokens: [CalcToken]) -> Bool {

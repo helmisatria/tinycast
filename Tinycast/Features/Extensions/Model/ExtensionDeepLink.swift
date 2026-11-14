@@ -1,14 +1,25 @@
 import Foundation
 
-/// An `extensions` deep link: `raycast://extensions/<owner>/<extension>/<command>?arguments={…}`.
-/// `tinycast://` mirrors it so our own links never depend on Raycast winning the scheme.
 struct ExtensionDeepLink: Sendable, Equatable {
+    enum Route: Sendable, Equatable {
+        case command(ExtensionDeepLink)
+        case storeInstall(StoreInstall)
+    }
+
+    struct StoreInstall: Sendable, Equatable, Identifiable {
+        let handle: String
+        let name: String
+
+        var id: String { "\(handle)/\(name)" }
+    }
+
     let ownerOrAuthor: String?
     let extensionName: String
     let commandName: String
     let arguments: [String: String]
     let fallbackText: String?
     let launchType: ExtensionLaunchType
+    let launchContext: [String: RenderValue]
 
     /// `owner/ext` first so a scoped manifest wins over a bare slug collision.
     var extensionCandidates: [String] {
@@ -24,11 +35,41 @@ struct ExtensionDeepLink: Sendable, Equatable {
 
     static func claims(_ url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased() else { return false }
-        return ["raycast", "tinycast", "com.raycast", "raycastinternal"].contains(scheme)
+        return ["raycast", "tinycast", "tinycast-dev", "com.raycast", "raycastinternal"].contains(scheme)
+    }
+
+    /// Reads back through `route(url:)`, owner-scoped names included; `scheme` is the channel's.
+    static func url(
+        extensionName: String, commandName: String, arguments: [String: String], scheme: String
+    ) -> URL? {
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = "extensions"
+        components.path = "/\(extensionName)/\(commandName)"
+        if !arguments.isEmpty, let encoded = encodedArguments(arguments) {
+            components.percentEncodedQueryItems = [URLQueryItem(name: "arguments", value: encoded)]
+        }
+        return components.url
+    }
+
+    /// Encoded strictly, so `parseArguments` reads back exactly what was typed.
+    private static func encodedArguments(_ arguments: [String: String]) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let unreserved = CharacterSet(
+            charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        return (try? encoder.encode(arguments))
+            .flatMap { String(bytes: $0, encoding: .utf8) }
+            .flatMap { $0.addingPercentEncoding(withAllowedCharacters: unreserved) }
+    }
+
+    static func parse(url: URL) -> ExtensionDeepLink? {
+        guard case .command(let link)? = route(url: url) else { return nil }
+        return link
     }
 
     /// Host and first path segment unify `raycast://extensions/…` and `com.raycast:/extensions/…`.
-    static func parse(url: URL) -> ExtensionDeepLink? {
+    static func route(url: URL) -> Route? {
         guard claims(url) else { return nil }
         var segments: [String] = []
         if let host = url.host, !host.isEmpty { segments.append(host) }
@@ -37,6 +78,12 @@ struct ExtensionDeepLink: Sendable, Equatable {
         guard segments.count >= 3, segments[0].lowercased() == "extensions" else { return nil }
         let body = Array(segments.dropFirst())
         guard body.count >= 2 else { return nil }
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        if body.count == 2,
+            items.contains(where: { $0.name.lowercased() == "source" && $0.value == "webstore" })
+        {
+            return .storeInstall(StoreInstall(handle: body[0], name: body[1]))
+        }
         let ownerOrAuthor: String?
         let extensionName: String
         let commandName: String
@@ -55,10 +102,10 @@ struct ExtensionDeepLink: Sendable, Equatable {
             commandName = body[body.count - 1]
         }
         guard !extensionName.isEmpty, !commandName.isEmpty else { return nil }
-        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         var arguments: [String: String] = [:]
         var fallbackText: String?
         var launchType = ExtensionLaunchType.userInitiated
+        var launchContext: [String: RenderValue] = [:]
         for item in items {
             switch item.name.lowercased() {
             case "arguments":
@@ -67,13 +114,24 @@ struct ExtensionDeepLink: Sendable, Equatable {
                 fallbackText = item.value
             case "launchtype", "launch_type":
                 launchType = item.value?.lowercased() == "background" ? .background : .userInitiated
+            case "context", "launchcontext":
+                if let raw = item.value { launchContext = parseContext(raw) }
             default:
                 break
             }
         }
-        return ExtensionDeepLink(
-            ownerOrAuthor: ownerOrAuthor, extensionName: extensionName, commandName: commandName,
-            arguments: arguments, fallbackText: fallbackText, launchType: launchType)
+        return .command(
+            ExtensionDeepLink(
+                ownerOrAuthor: ownerOrAuthor, extensionName: extensionName, commandName: commandName,
+                arguments: arguments, fallbackText: fallbackText, launchType: launchType,
+                launchContext: launchContext))
+    }
+
+    nonisolated static func parseContext(_ raw: String) -> [String: RenderValue] {
+        guard let data = raw.data(using: .utf8),
+            let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return [:] }
+        return object.mapValues(RenderValue.init(json:))
     }
 
     /// Raycast sends one URL-encoded JSON object; anything else means no arguments, not a failure.

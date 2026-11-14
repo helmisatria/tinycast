@@ -1,11 +1,12 @@
 import Foundation
 
-/// A page a reply pointed at, shown under it as a source the reader can open.
 struct ChatReference: Equatable, Hashable, Sendable {
     let title: String
     let url: URL
 
-    var host: String {
+    var host: String { Self.host(of: url) }
+
+    static func host(of url: URL) -> String {
         let host = url.host() ?? url.absoluteString
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
@@ -16,6 +17,8 @@ enum ChatReferences {
     static let limit = 8
 
     static func extract(from text: String) -> [ChatReference] {
+        // Every pattern below opens with `http`, so most replies skip five regex passes.
+        guard text.contains("http") else { return [] }
         let prose = withoutCode(text)
         var found: [(offset: Int, reference: ChatReference)] = []
         var linked = Set<String>()

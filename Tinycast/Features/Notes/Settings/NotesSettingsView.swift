@@ -26,9 +26,16 @@ struct NotesSettingsView: View {
                     SettingsRowTitle(.notesOptions, "Show Formatting Bar")
                 }
                 .settingsEnabled(settings.notesEnabled && settings.notesRendersMarkdown)
+                Toggle(isOn: $settings.notesShowsInMenuBar) {
+                    SettingsRowTitle(.notesOptions, "Show in Menu Bar")
+                    Text("Right-click the icon to create or search notes.")
+                }
+                .settingsEnabled(settings.notesEnabled)
                 LabeledContent {
                     if settings.notesFolder != nil {
-                        Button("Use Default", action: core.notesCoordinator.resetNotesFolder)
+                        Button(
+                            String(localized: "notes-use-default-folder", defaultValue: "Use Default"),
+                            action: core.notesCoordinator.resetNotesFolder)
                     }
                     Button("Choose…", action: core.notesCoordinator.chooseNotesFolder)
                 } label: {

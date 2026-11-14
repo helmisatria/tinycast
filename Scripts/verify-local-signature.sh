@@ -17,6 +17,9 @@ INSTALLED="${2:-}"
 if [ -n "$INSTALLED" ] && [ -d "$INSTALLED" ]; then
     codesign --verify --deep --strict "$INSTALLED"
     REQUIREMENT="$(codesign -d -r- "$INSTALLED" 2>&1 | sed -n 's/^\(# \)\{0,1\}designated => //p')"
+    # Same certificate, new bundle id (the com.abueammar.tinycast move): compare the signer only.
+    NEW_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")"
+    REQUIREMENT="$(printf '%s' "$REQUIREMENT" | sed -E "s/^identifier \"[^\"]+\"/identifier \"$NEW_ID\"/")"
     if [ -z "$REQUIREMENT" ] || ! codesign --verify -R="$REQUIREMENT" "$APP"; then
         echo "✗ Signing identity changed; installation would invalidate the saved grant." >&2
         echo "Use the installed app's signing identity. See docs/signing.md." >&2

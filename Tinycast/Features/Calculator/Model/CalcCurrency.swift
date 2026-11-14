@@ -2,8 +2,8 @@ import Foundation
 
 /// One currency: the ISO 4217 code shown by the amount, plus the long label used as a card badge.
 struct CurrencyDef: Equatable, Sendable {
-    let code: String  // "EUR"
-    let name: String  // "Euro"
+    let code: String
+    let name: String
 }
 
 /// A rate snapshot in units per 1 `base`. `CurrencyRateStore` fetches; the engine never does.
@@ -37,14 +37,15 @@ enum CalcCurrency {
         case unavailable
     }
 
-    /// The category label used in the mismatch message, mirroring `UnitCategory.displayName`.
-    static let categoryName = "Currency"
+    static let categoryName = String(localized: "Currency")
 
-    /// `expr currency (to|in|->) currency`, shaped like `CalcUnits.parseConversion`, run after it.
+    /// `expr currency [to|in|->] currency`, shaped like `CalcUnits.parseConversion`, run after it.
     static func parseConversion(_ tokens: [CalcToken], rates: CurrencyRates?) -> ConversionParse? {
         let tokens = amountFirst(tokens)
-        guard tokens.count >= 3, CalcUnits.isConnector(tokens[tokens.count - 2]),
-            case .ident(let toName) = tokens[tokens.count - 1],
+        guard tokens.count >= 3, CalcUnits.isConnector(tokens[tokens.count - 2]) else {
+            return parsePair(tokens, rates: rates)
+        }
+        guard case .ident(let toName) = tokens[tokens.count - 1],
             case .ident(let fromName) = tokens[tokens.count - 3]
         else { return nil }
 
@@ -59,24 +60,14 @@ enum CalcCurrency {
             guard let from = CalcUnits.byName[fromName] else { return nil }
             return .mismatch(from: from.category.displayName, to: categoryName)
         case (let from?, let to?):
-            let valueTokens = Array(tokens[0..<(tokens.count - 3)])
-            let input: Double
-            if valueTokens.isEmpty {
-                input = 1
-            } else if let value = CalcExpressionParser.scalar(valueTokens) {
-                input = value
-            } else {
-                return nil
-            }
-
-            guard let rates else { return .unavailable }
-            guard rates.rate(for: from.code) != nil else { return .noRate(code: from.code) }
-            guard rates.rate(for: to.code) != nil else { return .noRate(code: to.code) }
-            guard let output = rates.convert(input, from: from.code, to: to.code) else {
-                return .noRate(code: to.code)
-            }
-            return .value(input: input, from: from, to: to, output: output)
+            return convert(Array(tokens[0..<(tokens.count - 3)]), from: from, to: to, rates: rates)
         }
+    }
+
+    /// Without a snapshot only a currency pair parses to `.unavailable`, whatever its amount.
+    static func isPair(_ tokens: [CalcToken]) -> Bool {
+        guard case .unavailable? = parseConversion(tokens, rates: nil) else { return false }
+        return true
     }
 
     /// Money is written sign-first (`€20`), so swap it back into the `amount currency` order.
@@ -89,6 +80,27 @@ enum CalcCurrency {
         return reordered
     }
 
+    private static func convert(
+        _ valueTokens: [CalcToken], from: CurrencyDef, to: CurrencyDef, rates: CurrencyRates?
+    ) -> ConversionParse? {
+        let input: Double
+        if valueTokens.isEmpty {
+            input = 1
+        } else if let value = CalcExpressionParser.scalar(valueTokens) {
+            input = value
+        } else {
+            return nil
+        }
+
+        guard let rates else { return .unavailable }
+        guard rates.rate(for: from.code) != nil else { return .noRate(code: from.code) }
+        guard rates.rate(for: to.code) != nil else { return .noRate(code: to.code) }
+        guard let output = rates.convert(input, from: from.code, to: to.code) else {
+            return .noRate(code: to.code)
+        }
+        return .value(input: input, from: from, to: to, output: output)
+    }
+
     private static func numberToken(_ token: CalcToken) -> Bool {
         switch token {
         case .number, .compactNumber:
@@ -98,19 +110,29 @@ enum CalcCurrency {
         }
     }
 
+    /// `100 usd nzd`: the amount is required, as codes double as words and `try all` is a search.
+    private static func parsePair(_ tokens: [CalcToken], rates: CurrencyRates?) -> ConversionParse? {
+        let valueTokens = tokens.dropLast(2)
+        guard !valueTokens.isEmpty,
+            case .ident(let fromName) = tokens[tokens.count - 2], let from = byName[fromName],
+            case .ident(let toName) = tokens[tokens.count - 1], let to = byName[toName]
+        else { return nil }
+        return convert(Array(valueTokens), from: from, to: to, rates: rates)
+    }
+
     /// Hand-written because CLDR won't assign a shared noun. docs/features/calculator.md
     private static let contested: [String: [String]] = [
-        "USD": ["dollar", "dollars"],  // 22 claimants
-        "CHF": ["franc", "francs"],  // 10
-        "GBP": ["pound", "pounds"],  // 9
-        "MXN": ["peso", "pesos"],  // 8
-        "INR": ["rupee", "rupees"],  // 6
-        "KES": ["shilling", "shillings"],  // 4
-        "AED": ["dirham", "dirhams"],  // 2
-        "KRW": ["won"],  // 2
-        "RON": ["leu", "lei"],  // 2
-        "RUB": ["ruble", "rubles"],  // 2
-        "SAR": ["riyal", "riyals"]  // 2
+        "USD": ["dollar", "dollars"],
+        "CHF": ["franc", "francs"],
+        "GBP": ["pound", "pounds"],
+        "MXN": ["peso", "pesos"],
+        "INR": ["rupee", "rupees"],
+        "KES": ["shilling", "shillings"],
+        "AED": ["dirham", "dirhams"],
+        "KRW": ["won"],
+        "RON": ["leu", "lei"],
+        "RUB": ["ruble", "rubles"],
+        "SAR": ["riyal", "riyals"]
     ]
 
     /// ISO 4217's own names where CLDR differs; the standard is the source of truth.

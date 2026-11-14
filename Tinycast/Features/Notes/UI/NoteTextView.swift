@@ -44,7 +44,6 @@ final class NoteTextView: NSTextView, InjectableTextView {
                 selection: NSRange(location: range.location + (text as NSString).length, length: 0)))
     }
 
-    /// The formatting bar's way in: the same plan, gate and undo step as the matching chord.
     func format(_ action: NoteEditAction) {
         perform(action)
     }
@@ -55,11 +54,25 @@ final class NoteTextView: NSTextView, InjectableTextView {
         performTextFinderAction(item)
     }
 
+    /// The frame never gets shorter than the clip view, so only the layout knows the text's height.
+    func textHeight(upTo limit: CGFloat) -> CGFloat {
+        guard let textLayoutManager else { return frame.height }
+        var height: CGFloat = 0
+        // Summed: until the next draw, the lines below an edit keep their old origins.
+        textLayoutManager.enumerateTextLayoutFragments(
+            from: textLayoutManager.documentRange.location, options: [.ensuresLayout]
+        ) { fragment in
+            height += fragment.layoutFragmentFrame.height
+            return height < limit
+        }
+        return height + textContainerInset.height * 2
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard textStorage?.length == 0 else { return }
         NSAttributedString(
-            string: "Start writing…",
+            string: String(localized: "Start writing…"),
             attributes: [
                 .font: NoteMarkdownTypography.body,
                 .foregroundColor: NSColor(Theme.Colors.textTertiary)
@@ -250,7 +263,7 @@ final class NoteTextView: NSTextView, InjectableTextView {
             let fragment = textLayoutManager?.textLayoutFragment(for: point) as? NoteBlockLayoutFragment,
             case .task(let level, _) = fragment.decoration.shape
         else { return nil }
-        let firstLine = fragment.textLineFragments.first?.typographicBounds ?? .zero
+        let firstLine = fragment.firstLine
         let box = NoteCheckboxGeometry.rect(
             level: level, firstLineHeight: firstLine.height,
             bodyPointSize: fragment.decoration.bodyPointSize

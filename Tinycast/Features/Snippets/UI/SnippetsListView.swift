@@ -10,26 +10,58 @@ struct SnippetsList: View {
     let onActivate: () -> Void
     let onActions: (StoredSnippet) -> Void
 
+    private enum Row: Identifiable {
+        case header(String)
+        case item(StoredSnippet)
+        var id: String {
+            switch self {
+            case .header(let title): return "header-" + title
+            case .item(let record): return record.id
+            }
+        }
+    }
+
     private var firstRowSelected: Bool {
         selectedID != nil && selectedID == results.first?.id
     }
 
+    /// The store lists pinned first, so this emits a header on the one boundary.
+    private var rows: [Row] {
+        var rows: [Row] = []
+        var currentTitle: String?
+        for record in results {
+            let title = record.snippet.isPinned ? String(localized: "Pinned") : String(localized: "Snippets")
+            if title != currentTitle {
+                rows.append(.header(title))
+                currentTitle = title
+            }
+            rows.append(.item(record))
+        }
+        return rows
+    }
+
     var body: some View {
-        ScrollViewReader { proxy in
+        let rows = rows
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(results) { record in
-                        SnippetRow(record: record, selected: record.id == selectedID)
-                            .selectionFrame(record.id == selectedID)
-                            .contentShape(Rectangle())
-                            .onTapGesture { onSelect(record) }
-                            .simultaneousGesture(
-                                TapGesture(count: 2).onEnded {
-                                    onSelect(record)
-                                    onActivate()
-                                }
-                            )
-                            .onRightClick { onActions(record) }
+                    ForEach(rows) { row in
+                        switch row {
+                        case .header(let title):
+                            SectionHeader(title: title, isFirst: row.id == rows.first?.id)
+                        case .item(let record):
+                            SnippetRow(record: record, selected: record.id == selectedID)
+                                .selectionFrame(record.id == selectedID)
+                                .contentShape(Rectangle())
+                                .onTapGesture { onSelect(record) }
+                                .simultaneousGesture(
+                                    TapGesture(count: 2).onEnded {
+                                        onSelect(record)
+                                        onActivate()
+                                    }
+                                )
+                                .onRightClick { onActions(record) }
+                        }
                     }
                 }
                 .padding(.horizontal, metrics.spacing.md)
@@ -123,21 +155,34 @@ private struct SnippetInfoSection: View {
 
     private struct InfoRow: Identifiable {
         let label: String
-        let value: String
+        let value: Text
         var id: String { label }
+
+        init(label: String, value: String) {
+            self.label = label
+            self.value = Text(value)
+        }
+
+        init(label: String, keycaps: [String]) {
+            self.label = label
+            value = KeyCapChip.inlineText(keycaps)
+        }
     }
 
     private var rows: [InfoRow] {
-        var rows = [InfoRow(label: "Name", value: record.snippet.name)]
+        var rows = [InfoRow(label: String(localized: "Name"), value: record.snippet.name)]
         if let keyword = record.snippet.keyword, !keyword.isEmpty {
-            rows.append(InfoRow(label: "Keyword", value: keyword))
+            rows.append(InfoRow(label: String(localized: "Keyword"), value: keyword))
         }
         if let keycaps = hotKeys.binding(for: .snippet(id: record.id))?.keycaps {
-            rows.append(InfoRow(label: "Shortcut", value: keycaps.joined()))
+            rows.append(InfoRow(label: String(localized: "Shortcut"), keycaps: keycaps))
         }
-        rows.append(InfoRow(label: "File", value: record.fileURL.lastPathComponent))
         rows.append(
-            InfoRow(label: "Characters", value: record.snippet.text.count.formatted()))
+            InfoRow(label: String(localized: "File"), value: record.fileURL.lastPathComponent))
+        rows.append(
+            InfoRow(
+                label: String(localized: "Characters"),
+                value: record.snippet.text.count.formatted()))
         return rows
     }
 
@@ -153,7 +198,7 @@ private struct SnippetInfoSection: View {
                     HStack(spacing: metrics.spacing.sm) {
                         Text(row.label).foregroundStyle(.secondary)
                         Spacer(minLength: metrics.spacing.lg)
-                        Text(row.value).lineLimit(1).truncationMode(.middle)
+                        row.value.lineLimit(1).truncationMode(.middle)
                     }
                     .font(metrics.typography.keyCap)
                     .padding(.vertical, metrics.spacing.xs)

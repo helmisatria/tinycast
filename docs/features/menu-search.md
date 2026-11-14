@@ -73,7 +73,7 @@ is checked before the menu-bar test, because Tinycast runs as an accessory and w
 as menu-less; `excluded` is checked next, for the same reason.
 
 `MenuSearchSession` takes its walk as an injected `WalkOperation` — `(pid, showsAppleMenu)` — which
-is what lets `Tests/menu-search-test.swift` drive publication, supersession and cancellation without
+is what lets `Tests/MenuSearchTests.swift` drive publication, supersession and cancellation without
 an AX server.
 
 Ranking scores the title and the `File > Export As` display path together, but the path rides as a
@@ -87,12 +87,12 @@ path. The leaf title never rides along, because the row already draws it, and `M
 joins every path on one ` → ` so the id, the row and the search field cannot drift apart.
 
 Two AX details are worth knowing before touching `MenuSearchShortcut`. The modifier field is **not**
-`NSEvent.ModifierFlags` — bit 0 is Shift, bit 1 is Option, bit 2 is Control, and ⌘ is implied *unless*
-bit 3 clears it; only a bit above those four is unrenderable, so the shortcut is dropped. And AX
-reports a non-typing key either as a control scalar (`0x1B` Escape, `0x08` Delete) or as a private-use
-one (`0xF700`…), neither of which a text font draws, so `displayCharacter` names them instead:
-`⎋ ⌫ ⇥ ↩ ⌤ ⇤ ␣ ⌦ ⌧ ↑ ↓ ← → ↖ ↘ ⇞ ⇟` and `F1`…`F35`. Without both, a chord renders as tofu, as a blank
-chip, or not at all.
+`NSEvent.ModifierFlags` — bit 0 is Shift, bit 1 is Option, bit 2 is Control, and ⌘ is implied
+*unless* bit 3 clears it; only a bit above those four is unrenderable, so the shortcut is dropped.
+And AX reports a non-typing key either as a control scalar (`0x1B` Escape, `0x08` Delete) or as a
+private-use one (`0xF700`…), neither of which a text font draws, so `displayCharacter` names them
+instead: `esc ⌫ ⇥ ↩ ⌤ ⇤ ␣ ⌦ ⌧ ↑ ↓ ← → ↖ ↘ ⇞ ⇟` and `F1`…`F35`. Without both, a chord renders as
+tofu, as a blank chip, or not at all.
 
 The list decodes exactly one `NSImage` — the frozen app's icon — and every row paints it, so a
 4,000-row snapshot never costs more than one bitmap.

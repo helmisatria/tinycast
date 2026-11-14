@@ -80,7 +80,7 @@ jobs:
             CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" DEVELOPMENT_TEAM="$TEAM" \
             MARKETING_VERSION="$FORK_VERSION" CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" build
           APP="$RUNNER_TEMP/DerivedData/Build/Products/Release/Tinycast.app"
-          ./Scripts/verify-signature.sh "$APP"
+          TINYCAST_DEVELOPMENT_SIGNING=1 ./Scripts/verify-signature.sh "$APP"
           for BIN in "$APP/Contents/MacOS/Tinycast" "$APP/Contents/Helpers/ClipboardTextHelper" \
             "$APP/Contents/Helpers/Tinycast Dictation.app/Contents/MacOS/Tinycast Dictation"; do
             test "$(lipo -archs "$BIN")" = arm64

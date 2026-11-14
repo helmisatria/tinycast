@@ -10,7 +10,7 @@ struct UpdateActivity: Sendable {
     var isPaletteVisible = false
 }
 
-/// Whether it is safe to interrupt the user and swap the app out from under them.
+/// Whether it is safe to interrupt the user.
 enum UpdateReadiness {
     enum Blocker: Equatable, Sendable {
         case expandingSnippet
@@ -19,17 +19,6 @@ enum UpdateReadiness {
         case recordingHotKey
         case dialogOpen
         case paletteOpen
-
-        var message: String {
-            switch self {
-            case .expandingSnippet: return "Waiting for a snippet to finish expanding."
-            case .runningExtension: return "Waiting for a running extension command to finish."
-            case .uninstalling: return "Waiting for the uninstaller to finish."
-            case .recordingHotKey: return "Finish recording the shortcut first."
-            case .dialogOpen: return "Close the open dialog first."
-            case .paletteOpen: return "Close Tinycast's window first."
-            }
-        }
     }
 
     /// Ordered by consequence: an interrupted install loses work, an open panel does not.

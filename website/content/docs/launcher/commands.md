@@ -13,29 +13,34 @@ and only appear while the feature is on. The rest are in **Settings → Commands
 
 | Pane                                               | Commands                                                                                                                                                                                           |
 | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [AI](/docs/ai)                                     | AI Chat                                                                                                                                                                                            |
+| [AI](/docs/ai)                                     | Quick AI · AI Chat                                                                                                                                                                                            |
 | [Quick Actions](/docs/ai/quick-actions)            | Fix Grammar · Rewrite · Translate · Summarize                                                                                                                                                      |
 | [Clipboard](/docs/features/clipboard)              | Clipboard History · Paste Sequentially                                                                                                                                                             |
 | [Emoji & Symbols](/docs/features/emoji)            | Search Emoji & Symbols                                                                                                                                                                             |
 | [File Search](/docs/features/file-search)          | Search Files                                                                                                                                                                                       |
-| [Navigation](/docs/features/navigation)            | Switch Windows · Search Menu Bar Items                                                                                                                                                             |
+| [Navigation](/docs/features/navigation)            | Switch Windows · Switch Windows Backwards · Search Menu Bar Items                                                                                                                                  |
 | [Calendar](/docs/features/calendar)                | Join Next Meeting · My Schedule · Create Event · Copy Meeting Link · Open in Calendar                                                                                                              |
 | [Notes](/docs/features/notes)                      | Show Notes · Create Note · Search Notes                                                                                                                                                            |
 | [Window Management](/docs/features/window-layouts) | Create Window Layout · Create Layout from Current Windows · Switch Room · Create Room                                                                                                              |
 | [Quicklinks](/docs/launcher/quicklinks)            | Create Quicklink · Search Quicklinks · Import Quicklinks · Export Quicklinks                                                                                                                       |
 | [Snippets](/docs/features/snippets)                | Search Snippets · Create Snippet                                                                                                                                                                   |
-| Commands                                           | Calculator History · [Open Camera](/docs/features/camera) · Export Backup · Import Backup · Import from Raycast · Check for Updates · Settings · About Tinycast · Support Tinycast · Quit Tinycast |
+| Commands                                           | Calculator History · [Define Word](/docs/features/dictionary) · [Open Camera](/docs/features/camera) · Export Backup · Import Backup · Import from Raycast · Check for Updates · Tinycast Settings · About Tinycast · Support Tinycast · Quit Tinycast |
+
+**Create Custom Command** and **Search Custom Commands** are also in **Settings → Commands**, under
+Custom Commands. They follow **Enable custom commands**.
 
 Two more commands only appear for what you type: **Open in Browser** and **Run Shell Command**. See
 [Fallbacks](/docs/launcher/fallbacks).
 
-Each command's row has a launcher checkbox, a shortcut recorder and an alias field.
+Each listed command has a launcher checkbox and an alias field. Commands that support a global
+shortcut also have a recorder.
 
 You can give any built-in command a global shortcut, with three exceptions. Open in Browser and Run
 Shell Command need text to act on, and Quit Tinycast has no shortcut so a stray key press can't quit
 the app.
 
-A command that opens a screen works as a toggle: press its shortcut again to close the screen.
+Most commands that open a screen work as toggles: press the shortcut again to close.
+[Switch Windows](/docs/features/navigation#switch-windows) cycles the selection on repeated presses.
 
 **Enable Commands** at the top of Settings → Commands turns off every command in that pane, along
 with their shortcuts. Clearing one row's checkbox only hides that command from search; its shortcut
@@ -60,6 +65,10 @@ half-remembering its flags.
 Each command has an **Enabled** checkbox on its row. Clearing it keeps the command, its shortcut and
 its settings, but the command can't run until you select the checkbox again.
 
+To take a command out of the main search but keep its shortcut, select it in the launcher and press
+<kbd>⇧</kbd><kbd>⌘</kbd><kbd>H</kbd> (**Hide from Root Search**). Turn **Show in root search** back
+on in its editor to bring it back.
+
 ### The editor
 
 | Field                  | What it does                                                                 |
@@ -67,6 +76,7 @@ its settings, but the command can't run until you select the checkbox again.
 | Name                   | What you search for                                                          |
 | Command                | The shell command, like `/usr/bin/pmset displaysleepnow`                     |
 | Icon                   | A symbol for its row, dialogs and output window                              |
+| Show in root search    | Lists it in the main search. Off, only its shortcut runs it.                 |
 | Arguments              | Values to ask for first, passed as `$1`, `$2` …                              |
 | Run In                 | The folder it starts in. Empty means your home folder.                       |
 | Load shell environment | Loads your `.zshrc`, so aliases, functions and `PATH` work. Slower to start. |
@@ -92,15 +102,17 @@ is missing instead of running it somewhere else.
 
 ### Arguments
 
-A command with arguments asks for each one in order, in the palette, before it runs. The search field
-becomes the input, and the screen lists every argument with the answers you've given so far.
+Select a command with arguments and small fields appear beside the search field. The command stays
+selected while you fill them in.
 
-- <kbd>return</kbd> moves to the next argument. On the last one, it runs the command.
-- <kbd>delete</kbd> in an empty field goes back to the previous argument and restores what you typed.
-- <kbd>esc</kbd> clears your answer, and a second press cancels the run.
+- <kbd>tab</kbd> moves through the fields; <kbd>⇧</kbd><kbd>tab</kbd> moves back.
+- <kbd>return</kbd> runs the command once every required value is present. Otherwise it focuses the
+  first missing field.
+- <kbd>esc</kbd> leaves an argument field and returns to search.
 - A required argument can't be left empty.
 
-This works whether you run the command from the launcher, a favorite number or a global shortcut.
+This works from the launcher, Search Custom Commands, a favorite number or a global shortcut. A
+shortcut or favorite number opens the launcher with that command selected if values are still needed.
 
 **Values are passed to the shell as `$1`, `$2` …, and are never inserted into the command text.** A
 value like `; rm -rf ~` is only a string your script reads, not a second command. An empty optional

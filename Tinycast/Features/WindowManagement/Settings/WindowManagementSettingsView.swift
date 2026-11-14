@@ -87,6 +87,16 @@ struct WindowManagementSettingsView: View {
                 Text("Between tiled windows and screen edges.")
             }
 
+            Toggle(isOn: $settings.windowWrapsDisplays) {
+                SettingsRowTitle(.windowManagementOptions, "Wrap around displays")
+                Text("Moving past the last display returns to the first.")
+            }
+
+            Toggle(isOn: $settings.windowKeepsProportions) {
+                SettingsRowTitle(.windowManagementOptions, "Keep aspect ratio")
+                Text("Off keeps a window's size when it moves to another display.")
+            }
+
             LabeledContent {
                 HStack(spacing: Theme.Spacing.sm) {
                     Picker("Shortcut preset", selection: $chosenPreset) {
@@ -120,7 +130,8 @@ struct WindowManagementSettingsView: View {
         ForEach(WindowCommandCatalog.grouped(), id: \.group) { section in
             Section {
                 ForEach(section.commands) { command in
-                    WindowCommandSettingsRow(command: command)
+                    WindowCommandSettingsRow(
+                        command: command, showsInLauncher: settings.windowManagementShowInLauncher)
                 }
             } header: {
                 Text(section.group.title)
@@ -129,36 +140,30 @@ struct WindowManagementSettingsView: View {
     }
 }
 
-/// One command's shortcut recorder and visibility checkbox, shaped like the shortcuts row.
 private struct WindowCommandSettingsRow: View {
     let command: WindowCommand
+    let showsInLauncher: Bool
     @Environment(VisibilityStore.self) private var visibility
 
     var body: some View {
+        let entry = AppEntry(command)
+        let isVisible = visibility.isItemVisible(entry)
         SettingsRow(title: command.name) {
             Image(systemName: command.sfSymbol)
         } trailing: {
+            // The ranker never sees a hidden entry, so typing here would match nothing.
+            AliasField(entry: entry)
+                .settingsEnabled(showsInLauncher && isVisible)
+
             ShortcutRecorder(action: .windowCommand(id: command.id))
 
-            Toggle("", isOn: visibilityBinding)
-                .labelsHidden()
-                .toggleStyle(.checkbox)
-                .launcherVisibilityHelp()
-                .accessibilityLabel("Show \(command.name) in launcher")
+            Toggle(
+                "", isOn: Binding(get: { isVisible }, set: { visibility.setItemVisible($0, for: entry) })
+            )
+            .labelsHidden()
+            .toggleStyle(.checkbox)
+            .launcherVisibilityHelp()
+            .accessibilityLabel("Show \(command.name) in launcher")
         }
-    }
-
-    /// `VisibilityStore` keys on the entry, so this builds the same entry `AppIndex` publishes.
-    private var entry: AppEntry {
-        AppEntry(
-            id: command.entryID, name: command.name,
-            url: URL(string: "tinycast://window-command/" + command.id.rawValue)!, bundleID: nil,
-            kind: .windowCommand)
-    }
-
-    private var visibilityBinding: Binding<Bool> {
-        Binding(
-            get: { visibility.isItemVisible(entry) },
-            set: { visibility.setItemVisible($0, for: entry) })
     }
 }

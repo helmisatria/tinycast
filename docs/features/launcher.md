@@ -1,7 +1,20 @@
 # App launcher & root search
 
-`AppIndex.scan()` runs off-main, enumerates the user's search scopes, and dedups by bundle ID (the
-earliest scope wins; within one folder, the newest `CFBundleShortVersionString` does).
+`AppIndex.scan()` runs off-main and keeps each distinct application path in launcher results.
+Settings and app pickers retain one representative per bundle ID: the earliest scope wins;
+within one folder, the newest `CFBundleShortVersionString` does.
+
+Copies sharing a bundle ID keep app-wide aliases, visibility, ranking, favorites and global shortcuts.
+Favorites and Suggestions show the representative, while the other copies remain in ordinary results.
+Version subtitles distinguish copies; equal or missing versions also show the containing folder.
+Return opens the selected path with running-application substitution disabled, so a different running
+version cannot replace it. Restart also reopens the selected path. Bundle-ID-based operations such as
+Window Layouts retain macOS's default running-application substitution. Uninstall is unavailable while
+indexed copies share the bundle ID, because their support files and preferences may be shared.
+
+`./Scripts/run-tests.sh AppInstallationTests` covers the shipped index and app-wide preferences.
+Set `TINYCAST_TEST_APP_LAUNCH=1` for temporary native-app launch, quit and restart checks; the harness
+reports notification-dependent checks as skipped when the session cannot deliver workspace events.
 
 ## Invariants
 
@@ -24,7 +37,7 @@ earliest scope wins; within one folder, the newest `CFBundleShortVersionString` 
   not name belongs to Settings › Commands and answers to that switch.
 - **The ranking lives in pure files.** `Model/LauncherMatch.swift` (the scorer),
   `Model/LauncherOrder.swift` (the comparator) and `Model/LauncherSuggestions.swift` are
-  Foundation-only and pure, so `fuzz-test` compiles the shipped code. Changing a rule means changing
+  Foundation-only and pure, so `FuzzTests` compiles the shipped code. Changing a rule means changing
   [Ranking](#ranking), never adding a tuning constant.
 - **`Model/EntryNaming.swift` is the only place a name is decided, for every kind alike.** A producer
   fills `EntryNaming.Sources` — title, alternate titles, subtitle, keywords — and `profile(for:)`
@@ -34,10 +47,13 @@ earliest scope wins; within one folder, the newest `CFBundleShortVersionString` 
   apply to applications and quietly skip snippets — and nothing is built per keystroke. `AppIndex.scan`
   names the app slice on its own, off-main: transliterating a CJK index is ICU work, and
   `publishEntries` runs on the main actor whenever any unrelated slice changes.
+- **Tinycast never translates a name it did not write.** Apps, panes, quicklinks, snippets and
+  extensions read the way their source names them. A built-in command shows its translated name and
+  keeps its English source as an alternate title, so `clipboard` finds it in every language.
 - **The fields stay separate.** Which field matched is half of what the comparator reads — an exact
   subtitle, an exact alternate title and a keyword hit are three different rules.
 - **`Model/SearchScopes.swift` and `Model/LauncherRankingStore.swift` are pure too** — the ranking store
-  takes its clock via `now` and its path via `fileURL`, for `scopes-test` and `ranking-test`.
+  takes its clock via `now` and its path via `fileURL`, for `ScopesTests` and `RankingTests`.
 
 ## Search scopes
 
@@ -54,11 +70,15 @@ its `Contents/Applications` and `Contents/Developer/Applications` folders, where
 Instruments, Icon Composer and Simulator, and a subfolder nested deeper than one level still needs
 its own scope.
 
+Directory symlinks work as scopes, subfolders, and embedded-app folders. App paths stay under the
+configured scope, not the resolved target. The scan skips links back to an ancestor directory to
+prevent cycles.
+
 Within one folder, bundles are listed newest `CFBundleShortVersionString` first, compared as numbers
 so `26.6` outranks `9.4`. A tie or an unreadable version falls back to Finder's name order. Because
-the scan keeps a bundle ID's first copy, two Xcodes in `/Applications` resolve to the newest, every
-scan, and the embedded apps follow their parent. Scope order still comes first: listing an older
-copy as its own earlier scope pins it (#1288).
+the first copy represents its bundle ID, the newest Xcode in `/Applications` represents the app in
+Settings and Favorites, and the embedded apps follow their parent. Scope order still comes first:
+listing an older copy as its own earlier scope pins it (#1288). Search retains every copy.
 
 The defaults cover `/Applications` and `/System/Applications` plus their `Utilities` folders,
 `/System/Library/CoreServices/Applications`, the cryptex apps under
@@ -90,7 +110,7 @@ executable names are not matched.
 
 ## Ranking
 
-`fuzz-test` pins the scorer's values and every rule of the comparator.
+`FuzzTests` pins the scorer's values and every rule of the comparator.
 
 ### The scorer
 
@@ -176,14 +196,19 @@ matches, and is learned, under the same key. ASCII text skips ICU entirely on a 
 ## Names in the user's language
 
 `BundleLocalization` reads both `InfoPlist.loctable` and `<code>.lproj/InfoPlist.strings` for
-`Locale.preferredLanguages` plus English. This matters because `CFBundle` resolves only
+macOS's own languages (`SystemLanguages.preferred`) plus English — not `Locale.preferredLanguages`,
+which turns into Tinycast's interface language once one is picked, and would rename every app. This matters because `CFBundle` resolves only
 `InfoPlist.strings`, and every app under `/System/Applications` translates in the loctable alone — so
 all 65 of them read English on every Mac, whatever language it is set to.
 
-A tag carrying a script is read under two more codes, because no one folder name covers it: a
-`zh-Hans-CN` Mac also reads `zh-Hans`, the folder most third-party apps ship, then `zh_CN`, the key
-Apple's own loctables use. A script-only `zh-Hans` maximizes to reach the same region. A tag without a
-script, every English one included, produces exactly the codes it always did.
+A tag carrying a script is read under more codes, because no one folder name covers it: a
+`zh-Hans-US` Mac also reads `zh-Hans`, the folder most third-party apps ship, then its own region
+`zh_US`, then `zh_CN`, the script's home region and the key Apple's own loctables use. A region is read
+only when it writes the tag's script, so `zh-Hans-HK` skips the Traditional `zh_HK`, and `zh-Hant-HK`
+reads `zh_HK` before `zh_TW`. A tag without a script otherwise keeps its exact, underscore and
+bare-language forms. Bokmål (`nb`) additionally reads `no` after `nb`, because Apple's Norwegian
+loctables use that key; an explicit `nb.lproj` still wins. Other languages, including Nynorsk (`nn`),
+gain no alias.
 
 The user's own language wins the **display name**, so a row reads the way Finder reads it. The rest,
 English included, ride along as alternate titles, matched as typed and never transliterated.
@@ -200,8 +225,10 @@ every file name as an alternate title. Reading the `en_GB` those bundles *do* ca
 repair: it relabels `Print Center` as `Print Centre`. Below the development region the walk carries on,
 so every language under it stays indexed as an alternate title. The region is canonicalized before it is
 matched, because `CFBundleDevelopmentRegion` still ships its pre-BCP-47 spelling — Safari's and
-Terminal's read `English`. `AppDisplayName.inInfo` reads the `-macos` variant of each key before the
-bare one, the way `CFBundle` does: Image Playground's loctable spells the bare `CFBundleDisplayName`
+Terminal's read `English`. Norwegian development regions resolve as Bokmål, and both `nb` and `no`
+translations are checked before falling back to the untranslated name. `AppDisplayName.inInfo` reads
+the `-macos` variant of each key before the bare one, the way `CFBundle` does: Image Playground's
+loctable spells the bare `CFBundleDisplayName`
 `Playground` and only the suffixed key `Image Playground`. A non-English user finds their app by the
 name they see *and* by the English name the vendor advertises.
 
@@ -232,8 +259,8 @@ from its own Info.plist.
 
 A renamed bundle is the other half. A Finder rename never touches `CFBundleDisplayName`, so the
 on-disk basename is indexed as an alternate title — rename `Slack.app` to `Work Chat.app` and both find
-it. Duplicate copies dedupe by bundle id, and the losing copy lends its file name to the winner
-rather than being dropped whole.
+it. Each installed copy keeps its own names and URL; a renamed copy never lends its name to a
+different installation.
 
 ### Subtitles
 
@@ -244,24 +271,30 @@ by the title's own score, then by name. The subtitle does not name the entry, so
 
 ### Category search
 
-A query that *equals* a category's own name lists that whole category under its section header, in the
-order the section shows when the field is empty. Both words a kind already carries work — the section
-title and the singular label, `Snippets`/`Snippet`, `Window Management`/`Window Command` — read straight
-off `KindDescriptor` by `AppEntry.Kind.named(by:)`, so no category name is written a second time and a
-new `Kind` case gets its category word for free.
+A query that *equals* a category's name lists that whole category under its section header, in the
+order the section shows when the field is empty. The section title and singular label,
+`Snippets`/`Snippet` or `Window Management`/`Window Command`, come straight from `KindDescriptor`.
+An entry whose display name equals the query joins the listing: `System Settings` still shows the
+installed application above its panes.
 
-**The trigger is exact equality, never a prefix or a fuzzy hit**, because a looser rule would take a word
-away from a real entry: `System Settings` names both a category and an installed application. That one
-collision is answered rather than avoided — an entry whose display name equals the query joins the
-listing, so the app appears under Applications above the panes. Since slice order is section order
-(`publishEntries`), `categoryListing` filters and then sorts within each kind's run, as the empty list
-does, and the sectioned view stays 1:1 with the flat selection. Visibility still applies downstream,
-and no `limit` does, matching the empty query.
+At three characters or more, a prefix at the start of either name or one of its words also includes
+the category. `win` and `window` include Window Management and Window Layouts; `window man` and
+`management` include Window Management alone. Exact names select their own category first.
+`LauncherOrder.CategoryQuery` uses the shared fold and collapses whitespace, so case, accents,
+full-width text and pasted whitespace behave alike. Mid-word substrings and fuzzy subsequences
+never expand a category; short queries retain ordinary search ranking.
 
-`LauncherScreen` therefore separates the two jobs the empty query used to do at once: `showSections`
-draws the headers, `pinsFavorites` pins the Favorites prefix and hands out the ⌘-digit slots. A category
-listing takes the first only. Opening a row from one records the visit but not the word — a category
-word is not a search for the row that ran, and learning it would rank that row under `s`.
+A partial category query never reorders the ordinary search. Its ranked matches, including apps and
+aliases, lead under Results in relevance order, so the best match keeps the row Return opens. The
+category's remaining entries follow under their section headers in usage order, and meetings retain
+agenda order. Those sections follow publication order, so visible rows and flat selection stay aligned;
+`AppIndex.Results.matchCount` tells the view where the ranked rows end. Visibility still applies
+downstream. The result limit bounds ordinary matches, while whole categories remain uncapped, as they
+are for an empty query.
+
+Category queries show headers without pinning favorites or handing out their ⌘-digit slots. Opening
+a row records its visit; the query is learned only when it did not match that row's category, so
+category browsing cannot teach every window command the same search term.
 
 ### Contextual commands
 
@@ -283,6 +316,16 @@ would then carry.
 
 The row prints `AppEntry.subtitle` beside its name — the one field for an entry whose name alone
 can't say what it acts on.
+
+### Files
+
+With File Search on and its **Show in launcher** switch set, a query of three characters or more adds a
+**Files** section of up to five hits between the ranked results and the fallbacks. Like a fallback it is
+query-driven and not an `AppEntry`: `LauncherScreen.Row.file` carries the `FileSearchResult`, and
+`LauncherList.FileSection` draws it. A file row adds no `Kind` or `VisibilityStore` category and has
+no learned ranking, alias or Hide from Search. It can join the shared Favorites section through ⌘K or ⇧⌘F, and explicit favorites stay
+searchable with shorter queries and with **Show in launcher** off. See
+[file-search.md](file-search.md#in-the-launcher).
 
 ### Fallbacks
 
@@ -324,7 +367,7 @@ could arm shell execution from the launcher, which is the line `snippetsEnabled`
 a flag that grants a capability is never carried by a backup.
 
 `FallbackStore` is a thin persistence shell over `Fallback.ordered(_:by:)`, which is pure and covered
-by `fallback-test`: stored ids first, then anything the order has never seen, and a stored id with
+by `FallbackTests`: stored ids first, then anything the order has never seen, and a stored id with
 nothing behind it — a deleted quicklink — is skipped rather than resurrected. Settings ▸ Fallbacks
 lists exactly `FallbackCoordinator.available`, so a fallback whose feature is off is absent from the
 pane as well as from the launcher, and reorders through ↑/↓ buttons like a favorite rather than
@@ -360,8 +403,8 @@ list filters by **membership only**, keeping the index's name order — re-ranki
 would move the row being edited out from under its own field editor. A pane with a hand-written row
 hands `AliasField` the key itself: Settings ▸ Quicklinks passes `Quicklink.entryID`, Settings ▸
 Commands passes `CustomCommand.entryID`, Settings ▸ Extensions passes `extension:<name>/<command>`,
-and each dims the field when the entry is hidden from launcher search, whose entry the ranker never
-sees.
+Settings ▸ Window Management passes each command, custom size, layout and room's `AppEntry`, and each
+dims the field when the entry is hidden from launcher search, whose entry the ranker never sees.
 
 Aliases ride along in a settings backup (`launcherAliases`), and deleting what an alias points at —
 uninstalling an app, deleting a quicklink or custom command, uninstalling an extension — removes it
@@ -416,7 +459,7 @@ only while the score is above 1 and the entry was opened in the last 17 days, wh
 stale habit stop overriding the alignment.
 
 Every pick through `LauncherCoordinator.launch` is a visit, with the query as it was typed: a list
-click, a result, a favorite by ⌘-digit or from the compact bar, the ⌘K Open row. A global shortcut
+click, a result, a favorite by ⌘-digit, the ⌘K Open row. A global shortcut
 is not a visit, and neither is a fallback or a query-driven row. A category listing records the visit
 and not the word. `rank` reads the store once per pass through `snapshot()` — one clock read, not one
 per candidate — and the memos key on the ranking, alias, visibility, favorites and shortcut revisions
@@ -450,8 +493,8 @@ never suggested, however often they are opened:
    index, so it is never offered.
 
 A suggested entry leaves its kind section below, so no row appears twice. `AppIndex.Results` carries
-`favoriteCount`, `meetingCount` and `suggestionCount`, which `LauncherScreen` hands to `LauncherList`
-for its three leading headers. **Show suggestions** in Settings › General › Search turns the section
+`favoriteCount`, `meetingCount`, `suggestionCount` and, for a typed query, `matchCount`, which
+`LauncherScreen` hands to `LauncherList` for its leading headers. **Show suggestions** in Settings › General › Search turns the section
 off (`launcherShowsSuggestions`, carried by a settings backup). `HotKeyManager.revision` is part of
 `AppIndex`'s results key, because binding a shortcut takes an entry out of the section.
 
@@ -459,7 +502,7 @@ off (`launcherShowsSuggestions`, carried by a settings backup). `HotKeyManager.r
 
 `SystemActionCatalog` is a Foundation-only inventory of the macOS actions Tinycast exposes. Its
 stable entry IDs, labels, symbols and confirmation policy are covered by
-`Tests/system-action-test.swift`; platform side effects live separately in `SystemActionRunner`.
+`Tests/SystemActionTests.swift`; platform side effects live separately in `SystemActionRunner`.
 `SystemActionCoordinator.runSystemAction(id:)` remains the one execution funnel — shared by palette activation and a
 global hotkey — hiding the floating palette before any confirmation or value dialog and surfacing
 permission-aware failures. With the palette closed it targets the frontmost app, so Hide Others and
@@ -474,10 +517,15 @@ action is bindable to a global shortcut from Settings › System Actions
 (see [hotkeys.md](hotkeys.md)).
 
 Public AppKit, CoreAudio and workspace APIs are preferred. Actions without a stable public macOS API
-use fixed system tools, Apple Events, Accessibility, or a dynamically resolved Bluetooth power API.
-Those routes run only on explicit activation. Automation, Accessibility or Bluetooth permission is
-requested at first use, and denial produces an alert linking to the relevant System Settings pane.
+use fixed system tools, Apple Events, Accessibility, or dynamically resolved Bluetooth power and
+screen-lock APIs. Those routes run only on explicit activation. **Lock Screen never synthesizes
+⌃⌘Q**: a global hotkey fires on key-down, so its still-held modifiers would merge into the chord.
+Automation, Accessibility or Bluetooth permission is requested at first use, and denial produces an
+alert linking to the relevant System Settings pane.
 Toggle System Appearance changes macOS; Tinycast follows it only while its own Appearance is System.
+
+Restart and Shut Down follow macOS's "Reopen windows when logging back in" preference through
+System Events' `with state saving preference`; omitting it always saves window state.
 
 Restart, Shut Down, Log Out, Empty Trash and Quit All Applications confirm before execution: ↵ runs
 the action, Escape cancels. **Empty Trash follows Finder's own "Show warning before emptying the
@@ -488,10 +536,12 @@ the box is changed. Every dialog is Tinycast's own: confirmations, failure repor
 Volume slider all render through `DialogController` rather than an `NSAlert`
 (see [ui.md](../ui.md#dialogs--hud)). Each confirmation carries the action's own icon — Restart shows
 `arrow.clockwise`, Empty Trash `trash.slash` — so the dialog is recognizably about the row that
-opened it. Volume and mute actions also show Tinycast's transient volume HUD, since macOS only draws
+opened it. Output volume and mute actions also show Tinycast's transient volume HUD, since macOS only draws
 its own for real media keys. Volume Up/Down walk a 5% grid (`VolumeLevel.stepped`, covered by
-`Tests/volume-test.swift`): an off-grid level snaps to the next line rather than past it, so from 37%
-up lands on 40% and down on 35%, and repeated presses stay on round numbers.
+`Tests/VolumeTests.swift`): each press moves one line from the level's nearest line, so from 37% up
+lands on 40% and down on 30%, and repeated presses stay on round numbers. Stepping from the nearest
+line matters for devices that store a level slightly off the one set (45.1% for 45%): stepping from
+the read-back level alone would aim at the same line again and never move.
 
 An action whose effect is invisible reports back through a pill (`MessageHUDController`, the same one
 Custom Commands and Snippets confirm through) rather than finishing silently:
@@ -501,8 +551,16 @@ Custom Commands and Snippets confirm through) rather than finishing silently:
 something actually changed, `.neutral` when there was nothing to do, shown as the glyph trailing the
 message rather than a per-action icon, since the message already names the state. Actions that are
 their own confirmation, such as Show Desktop, Hide Others,
-Quit All and the power actions, return nothing. Volume and mute are the one case that stays on the
+Quit All and the power actions, return nothing. Output volume and mute stay on the
 palette's own box HUD, since that one has an actual level and number to show, not just a message.
+
+**Toggle Microphone Mute** reads the current default macOS input device on each activation and
+toggles its native CoreAudio input mute control without changing input gain or output audio.
+It is available in Settings › System Actions with the same global hotkey recorder as output mute.
+CoreAudio work runs off-main, and the message pill reports `Microphone Muted` or
+`Microphone Unmuted` only once the device confirms the requested state. Repeated activations are
+ignored while a change is pending. An absent input device, unavailable or externally controlled mute,
+or an unconfirmed write reports a failure rather than claiming the microphone was muted.
 
 **Nothing-to-do is an outcome, not a failure.** Empty Trash asks Finder for `count items of trash`
 first and reports `Trash Is Already Empty`, because Finder raises an error when told to empty an empty
@@ -625,20 +683,21 @@ value — so a command may be moved between owners without migrating anything.
 
 ## Navigation commands
 
-`CommandID.switchWindows` opens every running app's windows as a palette screen, and
-`CommandID.searchMenuItems` does the same for the front app's menu bar. Both are plain command
+`CommandID.switchWindows` opens every running app's windows as a palette screen,
+`CommandID.switchWindowsBackwards` opens the same screen and steps it the other way, and
+`CommandID.searchMenuItems` does the same for the front app's menu bar. All three are plain command
 entries — no new `AppEntry.Kind` and no `VisibilityStore` category — owned by Settings › Navigation
 through `SettingsTab.ownedCommands`, so `navigationEnabled` is their switch. Their invariants and
 internals live in [navigation.md](navigation.md) and [menu-search.md](menu-search.md).
 
-> **Invariant:** `Tests/fuzz-test.swift` compiles the real `Launcher/Model/LauncherMatch.swift` and
+> **Invariant:** `Tests/FuzzTests.swift` compiles the real `Launcher/Model/LauncherMatch.swift` and
 > `LauncherOrder.swift`, so both must stay Foundation-only and pure. There is no copy of the ranking
 > to keep in sync.
 
 The ranking harness covers the frecency curve, search-term retention and its 17-day gate, pruning,
 persistence and both reset paths; see the command in `development.md`.
 
-Launcher rows and compact favorites ask for the point size they actually draw at, scaled by the
+Launcher rows ask for the point size they actually draw at, scaled by the
 view's `displayScale`: 24/26/29pt becomes 48/52/58px at 2×. `IconCache` still rasterizes through its
 96px canvas first — AppKit picks the representation and the drop shadow from that size — and then
 keeps only the row-sized bitmap, in an 8 MB cost-capped row cache separate from the 32 MB one.
@@ -658,31 +717,31 @@ whose icon moved.
 
 ## Favorites
 
-`FavoritesStore.keys` is the order — the array *is* the ranking, and it only shows while the query is
-empty, where `AppIndex.orderedResults` pins it as a prefix of the results and counts it in
-`Results.favoriteCount`. `LauncherScreen` reads that count once in `init`, and the list, the reorder
-rows and the chord guards all read that one number, so the visible section and what a move acts on
-can't disagree.
+`FavoritesStore.keys` is the shared order for launcher entries, files and folders. The existing
+`favoriteApps` preference and settings-backup field hold the whole list. App and command keys keep
+their current spelling; file keys are absolute `file:///` URLs, with a trailing slash identifying a
+folder. Resolving a saved file reads no filesystem metadata and needs no loaded index. Favorites keep
+the saved path: renaming or moving a file requires adding its new location, and an unavailable path
+stays removable and reports the ordinary open failure.
 
-The ⌘K menu carries **Add / Remove from Favorites** (⇧⌘F) plus **Move Favorite Up / Down** (⌥⌘↑ /
-⌥⌘↓). A move row is only built in a direction that exists, so the first favorite has no Up row and
-the last has no Down.
+An empty query pins the section. `AppIndex.orderedResults` resolves the visible launcher entries;
+`LauncherScreen` merges those with saved files in key order through `FavoritesStore.orderedItems`.
+Its `pinnedFavorites` array feeds rendering, reordering and ⌘-digit slots. File favorites are hidden
+while File Search is disabled, with their keys retained. **Show in launcher** controls indexed search
+hits, so turning it off keeps explicit file favorites available.
 
-**Every one of those rows runs the same call its chord does** — the menu is handed an
-`AppActionsMenu.FavoriteActions` built by `LauncherScreen` and never touches `FavoritesStore` itself.
-A row that mutates the store directly looks identical on screen and then behaves differently from its
-chord, because the store knows nothing about where the highlight should land.
+The ⌘K menu carries **Add / Remove from Favorites** (⇧⌘F) on launcher entries and file results in both
+root search and Search Files, plus **Move Favorite Up / Down** (⌥⌘↑ / ⌥⌘↓) in the launcher Favorites
+section. A move row is only built in a direction that exists. `FavoriteActions` builds the shared
+menu rows; the launcher supplies the same calls its chords use so selection and scrolling agree.
 
-`FavoritesStore.exchange` swaps two stored positions rather than removing and re-inserting. `keys`
-retains entries that `VisibilityStore` hides or that aren't currently indexed — `ordered(_:)` drops
-them with `compactMap` and never prunes them, which is how a favorite survives an unmounted volume —
-so exchanging the two *visible* keys leaves every such key on its own slot.
+`FavoritesStore.exchange` swaps two stored positions rather than removing and re-inserting. Hidden
+or unindexed launcher entries keep their keys and slots, so exchanging two visible keys leaves those
+entries untouched.
 
-Both actions re-ask `orderedResults` afterwards and restate `vm.selection` against it; the mutation
-already invalidated the memo, so that call warms the exact key the next render reads. Where the
-highlight lands differs on purpose: a **move** follows the entry, since the point of the action is
-where that entry now sits, while a **toggle** stays with the section rather than chasing an entry
-across the list — the top of Favorites on add, the neighbour above the one that left on remove.
+Both actions resolve the current order after mutation. A move follows its entry; a toggle stays in
+Favorites, selecting the top on add or the neighbour above the removed row. A typed query pins no
+favorites and keeps its selection when one is toggled.
 
 ### ⌘-digit slots
 
@@ -692,11 +751,10 @@ so the same positions work on QWERTY and AZERTY. The same slots address pinned C
 that screen; the eleventh favorite is still listed and reorderable, and simply has no slot.
 
 Both palette sizes serve the chords from the same prefix, because `paletteIsCollapsed` already
-requires an empty query: **compact implies empty implies `favoriteCount` is the pinned prefix**. That
-is why `LauncherScreen.pinnedFavorites` feeds the strip, the chords and the numbered rows alike,
-rather than the compact bar re-deriving an empty-query order of its own. In compact the strip draws
-the first five; ⌘6–⌘0 still launch favorites it has no room for, and the "…" is a button after them
-rather than a slot, so no favorite loses its digit to the overflow.
+requires an empty query: **compact implies empty implies `pinnedFavorites` is the visible section**. That
+is why `LauncherScreen.pinnedFavorites` feeds the chords and the numbered rows alike, rather than
+the compact bar re-deriving an empty-query order of its own. The compact bar draws no favorites, yet
+every slot still launches one.
 
 Holding ⌘ swaps each numbered row's kind label for its chord. `PalettePanel` publishes the modifier
 into `PaletteState.commandHeld` from `.flagsChanged` and clears it in `resignKey` — not in `prepare`,
@@ -721,9 +779,11 @@ favorite, alias and learned ranking survive the round trip, and its shortcut kee
 The row is offered only where Settings can undo it, and `KindDescriptor.canHideFromSearch` is that
 rule — per kind, and a new `Kind` case has to answer it to compile. Applications, System Settings,
 Commands, Quick Actions, System Actions, Window Commands, Window Layouts, Rooms and extension commands each
-draw a per-row checkbox in their pane, so they carry it. Custom commands, quicklinks and snippets do
-not: their panes list a record with its own switches, not a launcher checkbox — a hide nothing in
-Settings can visibly undo is a trap, not a shortcut.
+draw a per-row checkbox in their pane, so they carry it. Snippets do not: their pane lists a record
+with its own switches, not a launcher checkbox — a hide nothing in Settings can visibly undo is a
+trap, not a shortcut. Quicklinks and custom commands differ: each editor has its own **Show in root
+search** switch, so the row offers **Hide from Root Search** and `hideFromSearch(at:)` clears that
+`showsInRootSearch` flag instead of writing `VisibilityStore`.
 `AppActionsMenu` adds the query-driven guard the favorites row already uses: a typed URL lives only
 for its query and has no preference to write.
 
@@ -741,6 +801,12 @@ Application and System Settings results expose **Show in Finder** in their ⌘K 
 shortcut is available for them. `AppEntry.canRevealInFinder` is the one rule both the menu row and
 the key handler read, so the advertised chord can't drift from the behavior.
 
+`AppLauncher.showInFinder` is every feature's reveal. `activateFileViewerSelecting` leaves the file
+viewer to bring itself forward, and macOS refuses that request while Tinycast is `.regular` (an open
+Settings or About window) yet inactive, which the non-activating palette makes common. Only in that
+state does the reveal also open the viewer named by the global `NSFileViewer` default, Finder when it
+is unset, so every other reveal is exactly the one system call.
+
 ## Dragging an application out
 
 An application row drags its bundle onto the Dock, into a System Settings privacy list, or anywhere
@@ -756,27 +822,28 @@ and the lead card keep SwiftUI's own gesture. The operation is **copy only**, as
 [clipboard.md](clipboard.md#dragging-out) explains: on the boot volume a file-URL drag would default
 to a move, and moving an app out of `/Applications` is never what a launcher should do. The image is
 the shared icon bitmap when it is warm and `NSWorkspace`'s otherwise, never a decode, and a landed
-drop hides the palette through `PaletteCoordinator.dragLanded()`. Compact mode's favorite buttons do
-not drag.
+drop hides the palette through `PaletteCoordinator.dragLanded()`.
 
 ## Quitting and restarting apps
 
-`RunningAppsMonitor` (live from `NSWorkspace` launch/terminate notifications) drives both the row's
-running dot and the availability of the running-only actions:
+`RunningAppsMonitor` (live from a KVO observation of `NSWorkspace.runningApplications`) drives both the
+row's running dot and the availability of the running-only actions. It observes the list rather than
+`didTerminateApplicationNotification`, which arrives while the list still holds the quitting app, so
+reading the list there left the dot on until some later launch or quit:
 
 - **Quit Application** — a row of an app's ⌘K Actions menu, shown only while that app is
   running, also bound to **⌃⇧Q** on the selected row. The chord guard mirrors the menu row's
   condition (an `.application` entry that `RunningAppsMonitor` reports running) so the key never
   swallows a press it won't act on, and it's skipped in the compact bar, which shows no selection.
-  `AppLauncher.quit(bundleID:)` terminates every instance of the bundle and reports whether
+  `AppLauncher.quit(bundleID:url:)` terminates instances at the selected path and reports whether
   anything was running; the palette only dismisses when something was, and it restores focus unless
   the app it just quit _was_ `previousApp`.
 - **Force Quit Application** — the row below it and **⌃⌥⇧Q**, on the same guard and
-  the same dismissal. `AppLauncher.quit(bundleID:force:)` sends `forceTerminate()` instead, so the
+  the same dismissal. `AppLauncher.quit(bundleID:url:force:)` sends `forceTerminate()` instead, so the
   app gets no chance to save or refuse.
 - **Restart Application** — the row above Quit and **⌘R**, on the same guard: all three chords resolve
   their target through `LauncherScreen.runningApplication(at:)`, the single place that condition
-  lives. `AppLauncher.restart(bundleID:url:)` snapshots the running instances, subscribes to
+  lives. `AppLauncher.restart(bundleID:url:)` snapshots instances at the selected path, subscribes to
   `NSWorkspace.DidTerminateApplicationMessage` _before_ terminating so an instance that exits at
   once can't outrun the wait, then reopens the bundle once every snapshotted PID has gone. The wait
   is bounded by a five-second grace: a quit an app refuses, or one sitting behind a save sheet the

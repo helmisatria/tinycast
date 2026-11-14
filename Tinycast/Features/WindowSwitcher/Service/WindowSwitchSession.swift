@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 @MainActor
 @Observable
@@ -10,16 +10,23 @@ final class WindowSwitchSession {
     private var query = ""
     /// Live AX handles, so they are never observed and never outlive the show.
     @ObservationIgnored private var elements: [Int: WindowSwitchSweep.Element] = [:]
+    /// Held only while rows are shown, so an app that quits takes its rows with it.
+    @ObservationIgnored private var terminationToken: NSObjectProtocol?
 
     func present(_ snapshot: WindowSwitchSweep.Snapshot) {
         self.snapshot = WindowSwitchOrder.sorted(snapshot.entries)
         elements = snapshot.elements
+        observeTerminations()
         applyQuery()
     }
 
     func element(for handle: Int) -> WindowSwitchSweep.Element? { elements[handle] }
 
     func reset() {
+        if let terminationToken {
+            NSWorkspace.shared.notificationCenter.removeObserver(terminationToken)
+        }
+        terminationToken = nil
         snapshot = []
         filtered = []
         elements = [:]
@@ -28,6 +35,34 @@ final class WindowSwitchSession {
 
     func filter(_ query: String) {
         self.query = query
+        applyQuery()
+    }
+
+    func markMinimized(_ handle: Int) {
+        guard let index = snapshot.firstIndex(where: { $0.handle == handle }) else { return }
+        var entries = snapshot
+        entries[index].isMinimized = true
+        snapshot = WindowSwitchOrder.sorted(entries)
+        applyQuery()
+    }
+
+    private func observeTerminations() {
+        guard terminationToken == nil else { return }
+        // Fork: the classic observer, as the typed message API needs macOS 26.
+        terminationToken = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            guard let pid = app?.processIdentifier else { return }
+            MainActor.assumeIsolated { self?.removeWindows(of: pid) }
+        }
+    }
+
+    private func removeWindows(of pid: pid_t) {
+        let gone = Set(elements.compactMap { $0.value.app.processIdentifier == pid ? $0.key : nil })
+        guard !gone.isEmpty else { return }
+        for handle in gone { elements[handle] = nil }
+        snapshot.removeAll { gone.contains($0.handle) }
         applyQuery()
     }
 

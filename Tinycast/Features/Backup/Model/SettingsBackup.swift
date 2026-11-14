@@ -28,6 +28,7 @@ struct SettingsBackup: Codable {
         var hyperKey: String?
         var hyperKeyIncludesShift: Bool?
         var hyperKeyQuickPress: String?
+        var hyperKeySecureInputCompatibility: Bool?
         var emojiSkinTone: String?
         var emojiGridColumns: Int?
         var showInMenuBar: Bool?
@@ -35,26 +36,32 @@ struct SettingsBackup: Codable {
         var popToRootSeconds: Int?
         var escapeKeyBehavior: String?
         var appearance: String?
+        var language: String?
         var calcNumberStyle: String?
         var interfaceSize: String?
         var compactMode: Bool?
-        var showFavoritesInCompactMode: Bool?
+        var compactBarCommands: [String]?
         var searchScopes: [String]?
         var launcherShowsSuggestions: Bool?
         var rootSearchSensitivity: String?
         var openOnCursorScreen: Bool?
         // Safe to carry: it grants no permission class, just repositions the window.
         var paletteDraggable: Bool?
+        var animationsEnabled: Bool?
         var fileSearchEnabled: Bool?
         var fileSearchScopes: [String]?
         var fileSearchIgnorePatterns: [String]?
+        var fileSearchRemovedDefaultPatterns: [String]?
+        var fileSearchShowInLauncher: Bool?
         var notesEnabled: Bool?
         var notesRendersMarkdown: Bool?
         var notesShowsFormattingBar: Bool?
+        var notesShowsInMenuBar: Bool?
         // `snippetsEnabled` is absent: an import must not enable keystroke listening.
         var customCommandsEnabled: Bool?
         var customCommandsShowInLauncher: Bool?
         var snippetsShowInLauncher: Bool?
+        var snippetDefaultAction: String?
         // Safe to carry: it grants no permission class paste doesn't already prompt for.
         var navigationEnabled: Bool?
         var menuSearchDisabledApps: [String]?
@@ -63,6 +70,8 @@ struct SettingsBackup: Codable {
         var windowManagementShowInLauncher: Bool?
         var windowGap: Int?
         var windowCycle: String?
+        var windowWrapsDisplays: Bool?
+        var windowKeepsProportions: Bool?
         var windowLayoutsShowInLauncher: Bool?
         var windowRoomsShowInLauncher: Bool?
         // Carried, unlike `snippetsEnabled`: opening a link grants no permission class of its own.
@@ -70,7 +79,7 @@ struct SettingsBackup: Codable {
         var quicklinksShowInLauncher: Bool?
         var extensionsShowInLauncher: Bool?
         var quicklinkOpensNewWindow: Bool?
-        var quicklinkSelectionFallback: String?
+        var quicklinkPassesSelectedText: Bool?
         var quicklinkConfirmsBeforeDelete: Bool?
         // Carried like quicklinks: running a shortcut the user built grants no permission class.
         var appleShortcutsEnabled: Bool?
@@ -82,6 +91,7 @@ struct SettingsBackup: Codable {
         var joinWindowMinutes: Int?
         // `autoJoinMeetings` and `cameraPreview` are absent: an import must arm neither.
         var autoJoinConfirms: Bool?
+        var autoJoinNamedProvidersOnly: Bool?
         var menuBarEvents: Int?
         var calendarMenuBarDisplay: Int?
         var menuBarLinkedEventsOnly: Bool?
@@ -91,7 +101,6 @@ struct SettingsBackup: Codable {
         var supportReminders: Bool?
     }
 
-    /// One entry per bindable action. docs/features/hotkeys.md#persistence
     struct HotkeyBackup: Codable {
         /// Named apart from `commands`: the launcher toggle is the one action with no command row.
         var togglePalette: HotKeyBinding?
@@ -107,7 +116,6 @@ struct SettingsBackup: Codable {
         var customWindowSizes: [String: HotKeyBinding]?
     }
 
-    /// A tally of what an import touched, for user-facing confirmation.
     struct ApplySummary {
         var settingsFields = 0
         var hotkeys = 0
@@ -139,6 +147,7 @@ extension SettingsBackup {
             hyperKey: s.hyperKey.rawValue,
             hyperKeyIncludesShift: s.hyperKeyIncludesShift,
             hyperKeyQuickPress: s.hyperKeyQuickPress.rawValue,
+            hyperKeySecureInputCompatibility: s.hyperKeySecureInputCompatibility,
             emojiSkinTone: s.emojiSkinTone.rawValue,
             emojiGridColumns: s.emojiGridColumns.rawValue,
             showInMenuBar: s.showInMenuBar,
@@ -146,24 +155,30 @@ extension SettingsBackup {
             popToRootSeconds: s.popToRootTimeout.rawValue,
             escapeKeyBehavior: s.escapeKeyBehavior.rawValue,
             appearance: s.appearance.rawValue,
+            language: s.language.rawValue,
             calcNumberStyle: s.calcNumberStyle.rawValue,
             interfaceSize: s.interfaceSize.rawValue,
             compactMode: s.compactMode,
-            showFavoritesInCompactMode: s.showFavoritesInCompactMode,
+            compactBarCommands: s.compactBarCommands.map(\.rawValue),
             searchScopes: s.searchScopes,
             launcherShowsSuggestions: s.launcherShowsSuggestions,
             rootSearchSensitivity: s.rootSearchSensitivity.rawValue,
             openOnCursorScreen: s.openOnCursorScreen,
             paletteDraggable: s.paletteDraggable,
+            animationsEnabled: s.animationsEnabled,
             fileSearchEnabled: s.fileSearchEnabled,
             fileSearchScopes: s.fileSearchScopes,
             fileSearchIgnorePatterns: s.fileSearchIgnorePatterns,
+            fileSearchRemovedDefaultPatterns: s.fileSearchRemovedDefaultPatterns,
+            fileSearchShowInLauncher: s.fileSearchShowInLauncher,
             notesEnabled: s.notesEnabled,
             notesRendersMarkdown: s.notesRendersMarkdown,
             notesShowsFormattingBar: s.notesShowsFormattingBar,
+            notesShowsInMenuBar: s.notesShowsInMenuBar,
             customCommandsEnabled: s.customCommandsEnabled,
             customCommandsShowInLauncher: s.customCommandsShowInLauncher,
             snippetsShowInLauncher: s.snippetsShowInLauncher,
+            snippetDefaultAction: s.snippetDefaultAction.rawValue,
             navigationEnabled: s.navigationEnabled,
             menuSearchDisabledApps: s.menuSearchDisabledApps,
             menuSearchShowsAppleMenu: s.menuSearchShowsAppleMenu,
@@ -171,13 +186,15 @@ extension SettingsBackup {
             windowManagementShowInLauncher: s.windowManagementShowInLauncher,
             windowGap: s.windowGap,
             windowCycle: s.windowCycle.rawValue,
+            windowWrapsDisplays: s.windowWrapsDisplays,
+            windowKeepsProportions: s.windowKeepsProportions,
             windowLayoutsShowInLauncher: s.windowLayoutsShowInLauncher,
             windowRoomsShowInLauncher: s.windowRoomsShowInLauncher,
             quicklinksEnabled: s.quicklinksEnabled,
             quicklinksShowInLauncher: s.quicklinksShowInLauncher,
             extensionsShowInLauncher: s.extensionsShowInLauncher,
             quicklinkOpensNewWindow: s.quicklinkOpensNewWindow,
-            quicklinkSelectionFallback: s.quicklinkSelectionFallback.rawValue,
+            quicklinkPassesSelectedText: s.quicklinkPassesSelectedText,
             quicklinkConfirmsBeforeDelete: s.quicklinkConfirmsBeforeDelete,
             appleShortcutsEnabled: s.appleShortcutsEnabled,
             calendarShowInLauncher: s.calendarShowInLauncher,
@@ -185,6 +202,7 @@ extension SettingsBackup {
             calendarSpan: s.calendarSpan.rawValue,
             joinWindowMinutes: s.joinWindowMinutes.rawValue,
             autoJoinConfirms: s.autoJoinConfirms,
+            autoJoinNamedProvidersOnly: s.autoJoinNamedProvidersOnly,
             menuBarEvents: s.menuBarEvents.rawValue,
             calendarMenuBarDisplay: s.calendarMenuBarDisplay.rawValue,
             menuBarLinkedEventsOnly: s.menuBarLinkedEventsOnly,
@@ -331,6 +349,10 @@ extension SettingsBackup {
             settings.hyperKeyQuickPress = quick
             count += 1
         }
+        if let flag = s.hyperKeySecureInputCompatibility {
+            settings.hyperKeySecureInputCompatibility = flag
+            count += 1
+        }
         if let raw = s.emojiSkinTone, let tone = EmojiSkinTone(rawValue: raw) {
             settings.emojiSkinTone = tone
             count += 1
@@ -363,6 +385,10 @@ extension SettingsBackup {
             settings.appearance = appearance
             count += 1
         }
+        if let raw = s.language, let language = AppLanguage(rawValue: raw) {
+            settings.language = language
+            count += 1
+        }
         if let raw = s.calcNumberStyle, let style = CalcNumberStyle(rawValue: raw) {
             settings.calcNumberStyle = style
             count += 1
@@ -371,8 +397,10 @@ extension SettingsBackup {
             settings.compactMode = flag
             count += 1
         }
-        if let flag = s.showFavoritesInCompactMode {
-            settings.showFavoritesInCompactMode = flag
+        if let identifiers = s.compactBarCommands,
+            let commands = CommandID.compactBarCommands(from: identifiers)
+        {
+            settings.compactBarCommands = commands
             count += 1
         }
         if let scopes = s.searchScopes {
@@ -395,6 +423,10 @@ extension SettingsBackup {
             settings.paletteDraggable = flag
             count += 1
         }
+        if let flag = s.animationsEnabled {
+            settings.animationsEnabled = flag
+            count += 1
+        }
         // Writing through AppSettings is enough; AppCore's sinks re-project the rest.
         if let flag = s.fileSearchEnabled {
             settings.fileSearchEnabled = flag
@@ -406,6 +438,14 @@ extension SettingsBackup {
         }
         if let patterns = s.fileSearchIgnorePatterns {
             settings.fileSearchIgnorePatterns = patterns
+            count += 1
+        }
+        if let patterns = s.fileSearchRemovedDefaultPatterns {
+            settings.fileSearchRemovedDefaultPatterns = patterns
+            count += 1
+        }
+        if let flag = s.fileSearchShowInLauncher {
+            settings.fileSearchShowInLauncher = flag
             count += 1
         }
         if let flag = s.notesEnabled {
@@ -420,6 +460,10 @@ extension SettingsBackup {
             settings.notesShowsFormattingBar = flag
             count += 1
         }
+        if let flag = s.notesShowsInMenuBar {
+            settings.notesShowsInMenuBar = flag
+            count += 1
+        }
         if let flag = s.customCommandsEnabled {
             settings.customCommandsEnabled = flag
             count += 1
@@ -430,6 +474,10 @@ extension SettingsBackup {
         }
         if let flag = s.snippetsShowInLauncher {
             settings.snippetsShowInLauncher = flag
+            count += 1
+        }
+        if let raw = s.snippetDefaultAction, let action = SnippetDefaultAction(rawValue: raw) {
+            settings.snippetDefaultAction = action
             count += 1
         }
         if let flag = s.navigationEnabled {
@@ -460,6 +508,14 @@ extension SettingsBackup {
             settings.windowCycle = cycle
             count += 1
         }
+        if let flag = s.windowWrapsDisplays {
+            settings.windowWrapsDisplays = flag
+            count += 1
+        }
+        if let flag = s.windowKeepsProportions {
+            settings.windowKeepsProportions = flag
+            count += 1
+        }
         if let flag = s.windowLayoutsShowInLauncher {
             settings.windowLayoutsShowInLauncher = flag
             count += 1
@@ -488,10 +544,8 @@ extension SettingsBackup {
             settings.quicklinkOpensNewWindow = flag
             count += 1
         }
-        if let raw = s.quicklinkSelectionFallback,
-            let fallback = QuicklinkSelectionFallback(rawValue: raw)
-        {
-            settings.quicklinkSelectionFallback = fallback
+        if let flag = s.quicklinkPassesSelectedText {
+            settings.quicklinkPassesSelectedText = flag
             count += 1
         }
         if let flag = s.quicklinkConfirmsBeforeDelete {
@@ -516,6 +570,10 @@ extension SettingsBackup {
         }
         if let flag = s.autoJoinConfirms {
             settings.autoJoinConfirms = flag
+            count += 1
+        }
+        if let flag = s.autoJoinNamedProvidersOnly {
+            settings.autoJoinNamedProvidersOnly = flag
             count += 1
         }
         if let raw = s.menuBarEvents, let lead = MenuBarEvents(rawValue: raw) {

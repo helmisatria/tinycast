@@ -20,6 +20,8 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>TinycastURLScheme</key>
+	<string>$(TINYCAST_URL_SCHEME)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -28,7 +30,7 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>raycast</string>
-				<string>tinycast</string>
+				<string>$(TINYCAST_URL_SCHEME)</string>
 				<string>com.raycast</string>
 			</array>
 		</dict>
@@ -70,12 +72,14 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Tinycast records audio only while you use Dictation, to transcribe it on your Mac.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>Tinycast reads today's and tomorrow's events so you can join a meeting from the palette.</string>
+	<string>Tinycast accesses your events to show your schedule and let you join meetings.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>Tinycast lets extensions you run read and edit your reminders.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Tinycast uses Bluetooth access only when you run the Toggle Bluetooth action.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Tinycast</string>
+	<key>TinycastUpdatePublicKey</key>
+	<string>CSzrQKht5GxZW2nVLbWEunvUChqDkeFLP64xSQRWN9E=</string>
 </dict>
 </plist>

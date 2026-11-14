@@ -2,9 +2,15 @@ import Foundation
 
 struct CalcExpressionParser {
     static func scalar(_ tokens: [CalcToken]) -> Double? {
-        var parser = CalcExpressionParser(tokens: tokens, rates: nil)
-        guard let value = parser.parse(), case .scalar = value.kind, !value.isBoolean else { return nil }
+        guard let value = value(tokens), case .scalar = value.kind else { return nil }
         return value.effective
+    }
+
+    /// A phrase operand with its unit or currency kept; no exchange rates, so no conversion.
+    static func value(_ tokens: [CalcToken]) -> CalcValue? {
+        var parser = CalcExpressionParser(tokens: tokens, rates: nil)
+        guard let value = parser.parse(), !value.isBoolean else { return nil }
+        return value
     }
 
     let tokens: [CalcToken]
@@ -19,6 +25,8 @@ struct CalcExpressionParser {
 
     private static let unaryBindingPower = 25
     private static let compositeBindingPower = 40
+    /// Between `+` and `*`: `2 * 500 usd in eur` converts the product, `5 ft 3 in in cm` the height.
+    private static let conversionBindingPower = 15
 
     private var current: CalcToken? {
         position < tokens.count ? tokens[position] : nil
@@ -40,13 +48,17 @@ struct CalcExpressionParser {
 
     private mutating func parseExpression(minBindingPower: Int) -> CalcValue? {
         guard var left = parseOperand(), left.effective.isFinite else { return nil }
-        if let target = peekAdditiveConversion() {
-            position += 2
-            operationCount += 1
-            guard let converted = converted(left, to: target) else { return nil }
-            left = converted
-        }
-        while let binary = peekBinary(left: left), binary.bindingPower >= minBindingPower {
+        while true {
+            if Self.conversionBindingPower >= minBindingPower, let target = peekConversion() {
+                position = target.end
+                operationCount += 1
+                guard let converted = converted(left, to: target.name) else { return nil }
+                left = converted
+                continue
+            }
+            guard let binary = peekBinary(left: left), binary.bindingPower >= minBindingPower else {
+                return left
+            }
             if binary.consumesToken { position += 1 }
             operationCount += 1
             guard
@@ -56,20 +68,17 @@ struct CalcExpressionParser {
             else { return nil }
             left = combined
         }
-        return left
     }
 
-    /// A mid-expression `to` only when `+`/`-` follows it: `to usd * 30` stays genuinely ambiguous.
-    private func peekAdditiveConversion() -> String? {
-        guard position + 2 < tokens.count, CalcUnits.isConnector(tokens[position]),
-            case .ident(let name) = tokens[position + 1],
-            CalcUnits.byName[name] != nil || CalcCurrency.byName[name] != nil,
-            case .op(let next) = tokens[position + 2], next == .add || next == .subtract
+    /// A target that ends its scope stays trailing, so `10kg + 500g to lb` converts the whole sum.
+    private func peekConversion() -> (name: String, end: Int)? {
+        guard position < tokens.count, CalcUnits.isConnector(tokens[position]),
+            let target = CalcQuantity.conversionPrefix(tokens, at: position + 1),
+            target.end < tokens.count, case .op(let next) = tokens[target.end], next.bindingPower != nil
         else { return nil }
-        return name
+        return target
     }
 
-    /// An operator, its binding power, its right operand's minimum, and whether it consumes.
     struct BinaryOp {
         let op: CalcOperator
         let bindingPower: Int
@@ -167,12 +176,15 @@ struct CalcExpressionParser {
                 amount: left.effective + direction * right.effective, kind: .scalar)
         case (.unit(let lhs), .unit(let rhs)):
             guard lhs.isCompatible(with: rhs) else {
+                let lhsName = lhs.category.displayName
+                let rhsName = rhs.category.displayName
                 return fail(
-                    "Cannot \(op == .add ? "add" : "subtract") \(lhs.category.displayName) and \(rhs.category.displayName)."
-                )
+                    op == .add
+                        ? String(localized: "Cannot add \(lhsName) and \(rhsName).")
+                        : String(localized: "Cannot subtract \(lhsName) and \(rhsName)."))
             }
             if lhs.category == .temperature, lhs.symbol != rhs.symbol {
-                return fail("Cannot combine temperatures with different units.")
+                return fail(String(localized: "Cannot combine temperatures with different units."))
             }
             // Composite ("5 feet 3 inches") answers in its leading unit; `+`/`-` in the last.
             if implicit {
@@ -198,12 +210,14 @@ struct CalcExpressionParser {
                 amount: converted + direction * right.amount, kind: .currency(rhs))
         case (.unit(let lhs), .currency):
             return fail(
-                "Cannot \(op == .add ? "add" : "subtract") \(lhs.category.displayName) and Currency."
-            )
+                op == .add
+                    ? String(localized: "Cannot add \(lhs.category.displayName) and Currency.")
+                    : String(localized: "Cannot subtract \(lhs.category.displayName) and Currency."))
         case (.currency, .unit(let rhs)):
             return fail(
-                "Cannot \(op == .add ? "add" : "subtract") Currency and \(rhs.category.displayName)."
-            )
+                op == .add
+                    ? String(localized: "Cannot add Currency and \(rhs.category.displayName).")
+                    : String(localized: "Cannot subtract Currency and \(rhs.category.displayName)."))
         // A bare number takes the unit beside it; adjacency stays silent, being a half-typed unit.
         case (.unit, .scalar), (.currency, .scalar):
             guard !implicit else { return nil }
@@ -231,7 +245,7 @@ struct CalcExpressionParser {
         case (.unit, .unit), (.unit, .currency), (.currency, .unit):
             return combine(left, right, dividing: false)
         default:
-            return fail("Multiplication of these unit values is not supported.")
+            return fail(String(localized: "Multiplication of these unit values is not supported."))
         }
     }
 
@@ -254,10 +268,12 @@ struct CalcExpressionParser {
                 unit: CalcUnits.baseUnits[dimension] ?? inverted)
         case (.unit(let lhs), .unit(let rhs)):
             if !lhs.isCompatible(with: rhs) || lhs.currency != nil || rhs.currency != nil {
-                return combine(left, right, dividing: true)
+                var ratio = combine(left, right, dividing: true)
+                ratio?.isFuelRatio = Set([lhs.category, rhs.category]) == [.volume, .length]
+                return ratio
             }
             guard lhs.category != .temperature else {
-                return fail("Division of temperature values is not supported.")
+                return fail(String(localized: "Division of temperature values is not supported."))
             }
             let numerator = left.amount * lhs.factor
             let denominator = right.amount * rhs.factor
@@ -306,7 +322,7 @@ struct CalcExpressionParser {
         guard let combined = CalcUnitExpression.combine(lhs, rhs, dividing: dividing),
             let dimension = combined.dimension
         else {
-            return fail("Multiplication of these unit values is not supported.")
+            return fail(String(localized: "Multiplication of these unit values is not supported."))
         }
         if lhs.currency != nil || rhs.currency != nil { usedCurrencyRate = true }
         let base =
@@ -327,6 +343,18 @@ struct CalcExpressionParser {
         }
         let output = amount / unit.factor
         return output.isFinite ? CalcValue(amount: output, kind: .unit(unit)) : nil
+    }
+
+    /// Odd roots keep the sign, so `cube root of -8m3` is `-2 m` rather than no answer.
+    private func root(_ value: CalcValue, degree: Double) -> CalcValue? {
+        guard degree.truncatingRemainder(dividingBy: 2) == 1, value.effective < 0 else {
+            return power(value, exponent: 1 / degree)
+        }
+        var magnitude = value
+        magnitude.amount = -value.amount
+        guard var result = power(magnitude, exponent: 1 / degree) else { return nil }
+        result.amount = -result.amount
+        return result
     }
 
     private func power(_ value: CalcValue, exponent: Double) -> CalcValue? {
@@ -424,12 +452,16 @@ struct CalcExpressionParser {
                 if current == .ident("of") { position += 1 }
                 guard let value = parseOperand(), !value.isBoolean else { return nil }
                 operationCount += 1
-                if name == "square" { return power(value, exponent: 0.5) }
-                guard
-                    let result = power(
-                        CalcValue(amount: abs(value.effective), kind: value.kind), exponent: 1.0 / 3)
+                return root(value, degree: name == "square" ? 2 : 3)
+            }
+            if name == "root", let degree = number(at: position + 1), position + 2 < tokens.count,
+                tokens[position + 2] == .ident("of")
+            {
+                position += 3
+                guard degree >= 2, degree.rounded() == degree, let value = parseOperand(), !value.isBoolean
                 else { return nil }
-                return CalcValue(amount: value.amount < 0 ? -result.amount : result.amount, kind: result.kind)
+                operationCount += 1
+                return root(value, degree: degree)
             }
             if let constant = CalcMath.constants[name] {
                 position += 1
@@ -444,6 +476,14 @@ struct CalcExpressionParser {
                 position += 1
                 guard let argument = parseOperand(), !argument.isBoolean else { return nil }
                 operationCount += 1
+                if name == "log", current == .ident("base") {
+                    position += 1
+                    guard isScalar(argument.kind), let base = parseOperand(), isScalar(base.kind),
+                        !base.isBoolean,
+                        let result = CalcMath.evaluate("log", [argument.effective, base.effective])
+                    else { return nil }
+                    return derived(result, dimension: .scalar)
+                }
                 if isScalar(argument.kind) {
                     return derived(function(argument.effective), dimension: .scalar)
                 }
@@ -453,18 +493,16 @@ struct CalcExpressionParser {
                     return derived(function(argument.amount * unit.factor), dimension: .scalar)
                 }
                 if name == "sqrt" { return power(argument, exponent: 0.5) }
-                if name == "cbrt" {
-                    guard
-                        let result = power(
-                            CalcValue(amount: abs(argument.amount), kind: argument.kind), exponent: 1.0 / 3)
-                    else { return nil }
-                    return CalcValue(
-                        amount: argument.amount < 0 ? -result.amount : result.amount, kind: result.kind)
-                }
+                if name == "cbrt" { return root(argument, degree: 3) }
                 if ["abs", "floor", "ceil", "round", "trunc"].contains(name) {
                     return CalcValue(amount: function(argument.amount), kind: argument.kind)
                 }
                 return nil
+            }
+            if isAfterDivision, let unit = CalcUnits.byName[name] {
+                position += 1
+                dimensionCount += 1
+                return CalcValue(amount: 1, kind: .unit(unit))
             }
             guard CalcUnits.byName[name] == nil,
                 let definition = CalcCurrency.byName[name],
@@ -493,7 +531,7 @@ struct CalcExpressionParser {
     }
 
     private mutating func failComparison() -> Double? {
-        issue = "Cannot compare values with different dimensions."
+        issue = String(localized: "Cannot compare values with different dimensions.")
         return nil
     }
 
@@ -501,11 +539,11 @@ struct CalcExpressionParser {
         position += 2
         var values: [CalcValue] = []
         while true {
-            guard let value = parseExpression(minBindingPower: 0), !value.isBoolean else { return nil }
+            guard let end = argumentEnd(), let value = parseScope(upTo: end), !value.isBoolean
+            else { return nil }
             values.append(value)
-            if current == .op(.close) { position += 1; break }
-            guard current == .comma else { return nil }
-            position += 1
+            position = end + 1
+            if tokens[end] == .op(.close) { break }
         }
         operationCount += 1
         let first = values[0]
@@ -527,21 +565,26 @@ struct CalcExpressionParser {
         return CalcValue(amount: result, kind: keepsUnit ? first.kind : .scalar)
     }
 
-    /// A group is its own conversion scope, so `(20 sgd to usd) * 30` converts then multiplies.
     private mutating func parseGrouped() -> CalcValue? {
         guard let close = matchingParenthesis() else { return nil }
         position += 1
-        let target = CalcQuantity.conversionTarget(tokens, from: position, to: close)
-        guard let value = parseGroupedValue(upTo: target?.start ?? close)
-        else { return nil }
+        guard let value = parseScope(upTo: close) else { return nil }
         position = close + 1
+        return value
+    }
+
+    /// A group or argument is its own conversion scope, so `(20 sgd to usd) * 30` converts first.
+    private mutating func parseScope(upTo end: Int) -> CalcValue? {
+        let target = CalcQuantity.conversionTarget(tokens, from: position, to: end)
+        guard let value = parseScopedValue(upTo: target?.start ?? end) else { return nil }
+        position = end
         guard let target else { return value }
         operationCount += 1
         return converted(value, to: target.name)
     }
 
     /// A lone unit or currency implies an amount of 1, the way `eur to usd` already does.
-    private mutating func parseGroupedValue(upTo end: Int) -> CalcValue? {
+    private mutating func parseScopedValue(upTo end: Int) -> CalcValue? {
         if end - position == 1, case .ident(let name) = tokens[position],
             let kind = dimension(named: name)
         {
@@ -559,6 +602,26 @@ struct CalcExpressionParser {
         }
         guard let value = parseExpression(minBindingPower: 0), position == end else { return nil }
         return value
+    }
+
+    /// `100 / s` is one second, as `(s)` is; only here, so `m s` keeps meaning a unit pair.
+    private var isAfterDivision: Bool {
+        position > 0 && tokens[position - 1] == .op(.divide)
+    }
+
+    private func argumentEnd() -> Int? {
+        var depth = 0
+        for index in position..<tokens.count {
+            switch tokens[index] {
+            case .op(.open): depth += 1
+            case .op(.close):
+                if depth == 0 { return index }
+                depth -= 1
+            case .comma where depth == 0: return index
+            default: break
+            }
+        }
+        return nil
     }
 
     private func matchingParenthesis() -> Int? {
@@ -582,9 +645,17 @@ struct CalcExpressionParser {
             return nil
         case .unit(let from):
             if let to = CalcUnits.byName[targetName] ?? compoundTarget(targetName) {
+                if !from.isCompatible(with: to), CalcUnits.reciprocal(from, to, fuelRatio: value.isFuelRatio)
+                {
+                    guard let output = CalcUnits.reciprocalValue(value.effective, from: from, to: to)
+                    else { return nil }
+                    return CalcValue(amount: output, kind: .unit(to))
+                }
                 guard from.isCompatible(with: to) else {
                     return fail(
-                        "Cannot convert \(from.category.displayName) to \(to.category.displayName).")
+                        String(
+                            localized:
+                                "Cannot convert \(from.category.displayName) to \(to.category.displayName)."))
                 }
                 guard let output = convertedMeasurement(value.effective, from: from, to: to), output.isFinite
                 else { return nil }
@@ -592,7 +663,9 @@ struct CalcExpressionParser {
             }
             if CalcCurrency.byName[targetName] != nil {
                 return fail(
-                    "Cannot convert \(from.category.displayName) to \(CalcCurrency.categoryName).")
+                    String(
+                        localized:
+                            "Cannot convert \(from.category.displayName) to \(CalcCurrency.categoryName)."))
             }
             return nil
         case .currency(let from):
@@ -603,7 +676,9 @@ struct CalcExpressionParser {
             }
             if let to = CalcUnits.byName[targetName] {
                 return fail(
-                    "Cannot convert \(CalcCurrency.categoryName) to \(to.category.displayName).")
+                    String(
+                        localized:
+                            "Cannot convert \(CalcCurrency.categoryName) to \(to.category.displayName)."))
             }
             return nil
         }
@@ -638,16 +713,17 @@ struct CalcExpressionParser {
     ) -> Double? {
         recordCurrency(from.code)
         recordCurrency(to.code)
+        if from.code == to.code { return amount }
         guard let rates else {
-            issue = "Exchange rates unavailable — check your connection."
+            issue = String(localized: "Exchange rates unavailable — check your connection.")
             return nil
         }
         guard rates.rate(for: from.code) != nil else {
-            issue = "No exchange rate for \(from.code)."
+            issue = String(localized: "No exchange rate for \(from.code).")
             return nil
         }
         guard rates.rate(for: to.code) != nil else {
-            issue = "No exchange rate for \(to.code)."
+            issue = String(localized: "No exchange rate for \(to.code).")
             return nil
         }
         return rates.convert(amount, from: from.code, to: to.code)

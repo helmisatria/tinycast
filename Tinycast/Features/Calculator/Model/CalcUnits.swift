@@ -5,7 +5,8 @@ enum CalcUnits {
         var units: [CalcDimension: UnitDef] = [:]
         for name in [
             "m", "kg", "s", "m2", "m3", "b", "m/s", "pa", "bps", "m/s2", "n", "j", "w", "hz",
-            "a", "v", "ohm", "as", "m3/s", "px", "px2", "ppi"
+            "a", "v", "ohm", "as", "m3/s", "px", "px2", "ppi", "farad", "henry", "siemens", "wb", "tesla",
+            "mol"
         ] {
             if let unit = byName[name], let dimension = unit.category.dimension {
                 units[dimension] = unit
@@ -16,13 +17,29 @@ enum CalcUnits {
 
     static func productUnit(_ lhs: UnitDef, _ rhs: UnitDef) -> UnitDef? {
         let (measure, duration) = lhs.category == .time ? (rhs, lhs) : (lhs, rhs)
-        guard duration.category == .time, duration.factor >= 60 else { return nil }
+        guard duration.category == .time else { return nil }
+        if let accrued = accruedUnit(measure) { return accrued }
+        guard duration.factor >= 60 else { return nil }
         switch measure.category {
         case .power: return byName[measure.factor >= 1000 ? "kwh" : "wh"]
         case .electricCurrent: return byName[measure.factor <= 0.001 ? "mah" : "ah"]
         default: return nil
         }
     }
+
+    /// A rate over time accrues in its own numerator, so `60 mph * 2 h` is miles rather than meters.
+    private static func accruedUnit(_ rate: UnitDef) -> UnitDef? {
+        let symbol = rate.symbol.replacingOccurrences(of: "²", with: "2").replacingOccurrences(
+            of: "³", with: "3")
+        guard let numerator = rateNumerators[symbol] ?? symbol.split(separator: "/").first.map(String.init),
+            numerator != symbol, let unit = byName[numerator] ?? byName[numerator.lowercased()],
+            let rateDimension = rate.dimension, let unitDimension = unit.dimension,
+            unitDimension == rateDimension.adding(CalcDimension(time: 1))
+        else { return nil }
+        return unit
+    }
+
+    private static let rateNumerators = ["mph": "mi", "kn": "nmi"]
 
     enum ConversionParse: Equatable {
         case value(input: Double, from: UnitDef, to: UnitDef, output: Double)
@@ -57,10 +74,35 @@ enum CalcUnits {
             return nil
         }
 
+        if from.category != to.category, reciprocal(from, to) {
+            guard let output = reciprocalValue(input, from: from, to: to) else { return nil }
+            return .value(input: input, from: from, to: to, output: output)
+        }
         guard from.category == to.category else { return .mismatch(from: from, to: to) }
         let output = (input * from.factor + from.offset - to.offset) / to.factor
         guard output.isFinite else { return nil }
         return .value(input: input, from: from, to: to, output: output)
+    }
+
+    private static let speed = CalcDimension(length: 1, time: -1)
+    private static let pace = CalcDimension(length: -1, time: 1)
+
+    /// `30 mpg to l/100km`, `10 km/h to min/km`; area shares fuel's dimension, so fuel goes by name.
+    static func reciprocal(_ from: UnitDef, _ to: UnitDef, fuelRatio: Bool = false) -> Bool {
+        guard let lhs = from.dimension, let rhs = to.dimension else { return false }
+        if isFuel(to), isFuel(from) || fuelRatio { return lhs.adding(rhs) == .scalar }
+        return (lhs == speed && rhs == pace) || (lhs == pace && rhs == speed)
+    }
+
+    private static func isFuel(_ unit: UnitDef) -> Bool {
+        unit.category == .fuelEconomy || unit.category == .fuelConsumption
+    }
+
+    static func reciprocalValue(_ amount: Double, from: UnitDef, to: UnitDef) -> Double? {
+        let base = amount * from.factor
+        guard base != 0 else { return nil }
+        let output = 1 / base / to.factor
+        return output.isFinite ? output : nil
     }
 
     /// `day s` → `1 day` in `s`. Same category only, so two-word searches don't produce a card.
@@ -95,32 +137,27 @@ enum CalcUnits {
 
     static func isConnector(_ token: CalcToken) -> Bool {
         switch token {
-        case .arrow, .ident("to"), .ident("in"): return true
+        case .arrow, .ident("to"), .ident("in"), .ident("as"): return true
         default: return false
         }
     }
 
     /// Keyword-less counterpart per unit; only `m→ft` is compound.
     static let autoTargets: [String: (to: String, compound: Bool)] = [
-        // Length
         "mm": ("in", false), "cm": ("in", false), "m": ("ft", true), "km": ("mi", false),
         "dm": ("cm", false), "in": ("cm", false), "ft": ("m", false), "yd": ("m", false), "mi": ("km", false),
-        // Weight
         "mg": ("g", false), "g": ("oz", false), "kg": ("lb", false), "oz": ("g", false),
         "lb": ("kg", false),
         // Temperature (bare form requires a spelled/°-prefixed alias — see parseBareConversion)
         "°C": ("f", false), "°F": ("c", false), "K": ("c", false),
-        // Time
         "ms": ("s", false), "s": ("ms", false), "min": ("s", false), "hr": ("min", false),
         "day": ("hr", false), "week": ("day", false),
         "mo": ("day", false), "yr": ("day", false),
         "workdays": ("hr", false),
-        // Area
         "mm²": ("in2", false), "cm²": ("in2", false), "m²": ("ft2", false), "km²": ("mi2", false),
         "in²": ("cm2", false), "ft²": ("m2", false), "yd²": ("m2", false), "mi²": ("km2", false),
         "acre": ("m2", false), "ha": ("acre", false),
         "dm²": ("cm2", false),
-        // Volume
         "mL": ("floz", false), "L": ("gal", false), "cup": ("ml", false), "tbsp": ("ml", false),
         "tsp": ("ml", false), "gal": ("l", false), "qt": ("l", false), "pt": ("ml", false),
         "fl oz": ("ml", false),
@@ -129,23 +166,21 @@ enum CalcUnits {
         "in³": ("ml", false), "ft³": ("l", false), "yd³": ("l", false),
         "L/s": ("l/min", false), "L/min": ("l/h", false), "L/h": ("l/min", false),
         "m³/s": ("l/s", false), "m³/h": ("l/min", false), "gal/min": ("l/min", false),
-        // Digital storage
+        "mpg": ("km/l", false), "km/L": ("mpg", false),
         "bit": ("b", false), "B": ("bit", false), "kB": ("kib", false), "MB": ("mib", false),
         "GB": ("gib", false), "TB": ("tib", false), "PB": ("tb", false), "KiB": ("kb", false),
         "MiB": ("mb", false), "GiB": ("gb", false), "TiB": ("tb", false),
-        // Angle
         "deg": ("rad", false), "rad": ("deg", false), "grad": ("deg", false),
         "turn": ("deg", false), "arcmin": ("deg", false), "arcsec": ("deg", false),
-        // Speed
         "km/h": ("mph", false), "mph": ("kmh", false), "m/s": ("kmh", false),
         "kn": ("kmh", false), "ft/s": ("mph", false),
-        // Pressure
         "bar": ("psi", false), "psi": ("bar", false), "atm": ("psi", false),
         "mbar": ("psi", false), "kPa": ("psi", false), "hPa": ("psi", false),
         "mmHg": ("psi", false), "Torr": ("psi", false),
-        // Data transfer rate
         "Mbps": ("kbps", false), "Gbps": ("mbps", false), "Kbps": ("bps", false),
         "bps": ("kbps", false), "Tbps": ("gbps", false),
+        "Bps": ("bps", false), "kBps": ("kbps", false), "MBps": ("mbps", false),
+        "GBps": ("gbps", false), "TBps": ("tbps", false),
         "Wh": ("kwh", false), "mWh": ("wh", false), "kWh": ("wh", false), "MWh": ("kwh", false),
         "W": ("kw", false), "mW": ("w", false), "kW": ("w", false), "MW": ("kw", false),
         "A": ("ma", false), "mA": ("a", false), "µA": ("ma", false), "MA": ("a", false),

@@ -6,7 +6,71 @@ export const supportHero = {
   eyebrow: "Support",
   title: "Enjoying Tinycast?",
   intro:
-    "Tinycast is free and open source, and it will stay that way. If it saves you time and you'd like to support its development, you can contribute here. It's optional, and thank you either way.",
+    "Tinycast is free and open source, and it stays that way. If it earns a place on your Mac, buy the wallpaper pack or send some crypto. Either one helps me a lot. Thanks.",
+} as const;
+
+export type Wallet = {
+  id: string;
+  // The picker's short name; `network` is the precise one the warning needs.
+  label: string;
+  network: string;
+  address: string;
+};
+
+// Each id names its mark and QR code in public/wallets/; a code encodes its address verbatim.
+export const wallets: readonly Wallet[] = [
+  {
+    id: "bitcoin",
+    label: "Bitcoin",
+    network: "Bitcoin",
+    address: "bc1qpfxtjpuhm2cm8kg4lqgu3ffjch7vcjf678arwn",
+  },
+  {
+    id: "ethereum",
+    label: "Ethereum",
+    network: "Ethereum",
+    address: "0x22A00612bc0bf1Dc73AAC75e8De1BA4e81fF0810",
+  },
+  {
+    id: "solana",
+    label: "Solana",
+    network: "Solana",
+    address: "4EH7JDXZxkJiahas1xgPyC1iBW9pfCVUXxVtpqvwAz6T",
+  },
+  {
+    id: "base",
+    label: "Base",
+    network: "Base",
+    address: "0x22A00612bc0bf1Dc73AAC75e8De1BA4e81fF0810",
+  },
+  {
+    id: "bnb",
+    label: "BNB Chain",
+    network: "BNB Smart Chain",
+    address: "0x22A00612bc0bf1Dc73AAC75e8De1BA4e81fF0810",
+  },
+];
+
+export type Method = "crypto" | "card";
+
+export const methods: { id: Method; label: string }[] = [
+  { id: "card", label: "Card" },
+  { id: "crypto", label: "Crypto" },
+];
+
+export const cryptoSupport = {
+  intro: "Pick a network, then scan the code or copy the address.",
+  warning: (network: string) =>
+    `Send only on the ${network} network. Funds sent on another network may be lost.`,
+  unlisted: {
+    lead: "Network not listed? Email",
+    email: "iabueammar@gmail.com",
+    subject: "Supporting Tinycast",
+  },
+} as const;
+
+export const cardSupport = {
+  intro: "Buy the wallpaper pack and get a Discord role.",
 } as const;
 
 export const plans: { id: Plan; label: string }[] = [
@@ -17,29 +81,13 @@ export const plans: { id: Plan; label: string }[] = [
 export const presetAmounts = [5, 10, 25, 50] as const;
 export const maxAmount = 10_000;
 
-export const reasonsLabel = "What you're supporting";
-
-export const supportReasons = [
-  {
-    title: "Independent",
-    body: "Tinycast has no investors, ads or paid tiers. It's made for the people who use it.",
-  },
-  {
-    title: "Native",
-    body: "Built with Apple's frameworks for the current version of macOS, so it's fast, small and feels like part of your Mac.",
-  },
-] as const;
-
-export const runningCosts =
-  "Your support also pays the running costs: the yearly Apple Developer Program membership needed to sign and notarize releases, the tinycast.dev domain, and the services the project uses.";
-
 export const thanks = {
   title: "Thank you.",
-  body: "Your support goes straight into making Tinycast better.",
+  body: "Your wallpapers are ready.",
   next: {
     monthly: [
       "Polar has emailed your receipt.",
-      "It renews each month. Change or cancel it anytime from the link in that email.",
+      "Your subscription renews each month until canceled. Change or cancel it anytime in your Polar customer portal.",
     ],
     "one-time": [
       "Polar has emailed your receipt.",
@@ -47,8 +95,8 @@ export const thanks = {
     ],
   },
   perks: {
-    title: "Claim your perks",
-    body: "A thank-you download and a supporter role on Discord. Sign in with the email you paid with, then connect Discord to get the role.",
+    title: "Download your wallpapers",
+    body: "Sign in with your checkout email to download the pack and connect Discord to get your role.",
     action: "Open your Polar portal",
     // Polar's customer portal for the tinycast organization; perks are claimed there.
     href: "https://polar.sh/tinycast/portal",

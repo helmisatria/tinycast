@@ -48,13 +48,15 @@ final class ExtensionCoordinator {
         Task {
             guard
                 await core.confirm(
-                    title: "Enable extensions?",
-                    message:
-                        "Extensions are third-party JavaScript, run on this Mac. A running command "
-                        + "holds a JavaScript engine in memory until you leave it — expect Tinycast "
-                        + "to use noticeably more RAM while one is open.",
-                    symbol: "puzzlepiece.extension", confirmTitle: "Enable", tone: .neutral,
-                    confirmRole: .standard)
+                    title: String(localized: "Enable extensions?"),
+                    message: String(
+                        localized: """
+                            Extensions are third-party JavaScript, run on this Mac. A running command \
+                            holds a JavaScript engine in memory until you leave it — expect Tinycast \
+                            to use noticeably more RAM while one is open.
+                            """),
+                    symbol: "puzzlepiece.extension", confirmTitle: String(localized: "Enable"),
+                    tone: .neutral, confirmRole: .standard)
             else { return }
 
             settings.extensionsEnabled = true
@@ -81,24 +83,43 @@ final class ExtensionCoordinator {
         runExtensionCommand(entry)
     }
 
+    /// The link Copy Deeplink gives an extension row; extensions alone know their URL shape.
+    func deepLink(forEntryID entryID: String, arguments: [String: String]) -> URL? {
+        guard let ref = ExtensionCommandRef(entryID: entryID) else { return nil }
+        return ExtensionDeepLink.url(
+            extensionName: ref.extensionName, commandName: ref.commandName, arguments: arguments,
+            scheme: AppURLScheme.current)
+    }
+
     /// A `raycast://extensions/…` link: the same command the launcher would run, by slug.
     func runDeepLink(_ link: ExtensionDeepLink) {
         guard settings.extensionsEnabled else {
-            core.showMessage("Extensions are disabled — enable them in Settings", tone: .danger)
+            core.showMessage(
+                String(localized: "Extensions are disabled — enable them in Settings"), tone: .danger)
             return
         }
         guard let (owner, command) = extensions.resolve(link) else {
-            core.showMessage("No installed extension provides '\(link.commandName)'", tone: .danger)
+            core.showMessage(
+                String(localized: "No installed extension provides '\(link.commandName)'"), tone: .danger)
             return
         }
         run(
             owner, command: command, arguments: link.arguments, fallbackText: link.fallbackText,
-            launchType: link.launchType)
+            launchType: link.launchType, launchContext: link.launchContext)
     }
 
     // MARK: - Managing one extension from the launcher
 
-    /// Opens Settings on the extension a launcher row belongs to.
+    func showStoreInstall(_ install: ExtensionDeepLink.StoreInstall) {
+        paletteCoordinator.hidePalette(restoreFocus: false)
+        if settings.extensionsEnabled { core.pendingExtensionStoreInstall = install }
+        settingsCoordinator.showSettings(tab: .extensions)
+        if !settings.extensionsEnabled {
+            core.showMessage(
+                String(localized: "Extensions are disabled — enable them in Settings"), tone: .danger)
+        }
+    }
+
     func showExtensionSettings(for app: AppEntry) {
         guard let (owner, _) = extensions.resolve(app) else { return }
         showExtensionSettings(for: owner)
@@ -116,11 +137,13 @@ final class ExtensionCoordinator {
         Task {
             guard
                 await core.confirm(
-                    title: "Uninstall \(owner.title)?",
-                    message:
-                        "Removes the extension and everything it stored — its preferences, its cache "
-                        + "and its own files. Its commands leave the launcher.",
-                    symbol: "trash", confirmTitle: "Uninstall")
+                    title: String(localized: "Uninstall \(owner.title)?"),
+                    message: String(
+                        localized: """
+                            Removes the extension and everything it stored — its preferences, its cache \
+                            and its own files. Its commands leave the launcher.
+                            """),
+                    symbol: "trash", confirmTitle: String(localized: "Uninstall"))
             else { return }
             await extensions.uninstall(owner)
         }
@@ -132,11 +155,13 @@ final class ExtensionCoordinator {
         let size = ExtensionCleanup.formatted(bytes: report.bytes)
         guard
             await core.confirm(
-                title: "Clean up \(size)?",
-                message:
-                    "Removes build files left by an interrupted install, and the storage of "
-                    + "extensions that are no longer installed. Installed extensions are untouched.",
-                symbol: "trash", confirmTitle: "Clean Up")
+                title: String(localized: "Clean up \(size)?"),
+                message: String(
+                    localized: """
+                        Removes build files left by an interrupted install, and the storage of \
+                        extensions that are no longer installed. Installed extensions are untouched.
+                        """),
+                symbol: "trash", confirmTitle: String(localized: "Clean Up"))
         else { return }
 
         let installed = Set(extensions.installed.map(\.manifest.name))
@@ -146,7 +171,8 @@ final class ExtensionCoordinator {
         }.value
         core.showMessage(
             freed.isEmpty
-                ? "Nothing to clean up" : "Reclaimed \(ExtensionCleanup.formatted(bytes: freed.bytes))")
+                ? String(localized: "Nothing to clean up")
+                : String(localized: "Reclaimed \(ExtensionCleanup.formatted(bytes: freed.bytes))"))
     }
 
     /// What no index prunes: left behind, these key a shortcut or a rank to a vanished command.
@@ -179,6 +205,25 @@ final class ExtensionCoordinator {
         fallbackText: String? = nil, launchType: ExtensionLaunchType = .userInitiated,
         launchContext: [String: RenderValue] = [:]
     ) {
+        let missing = extensions.storage.missingRequiredPreferences(
+            extension: owner.manifest.name,
+            schemas: owner.manifest.preferences + command.preferences)
+        if launchType == .userInitiated, command.mode != .view, !missing.isEmpty {
+            Task {
+                guard
+                    await core.confirm(
+                        title: owner.manifest.title,
+                        message: ExtensionLaunchError.missingPreferences(missing).localizedDescription,
+                        symbol: "puzzlepiece.extension",
+                        confirmTitle: String(localized: "Configure Extension"),
+                        tone: .neutral, confirmRole: .standard),
+                    extensions.isEnabled,
+                    let installed = extensions.extensionNamed(owner.manifest.name)
+                else { return }
+                showExtensionSettings(for: installed)
+            }
+            return
+        }
         switch command.mode {
         case .view:
             // Switch the palette over first, so the launching state is what the user sees.
@@ -207,7 +252,6 @@ final class ExtensionCoordinator {
         extensions.setMenuBarEnabled(enabled, reference: reference)
     }
 
-    /// The arguments a row declares, or nil — what decides whether the header shows inline fields.
     func commandArguments(for entry: AppEntry?) -> [ExtensionCommandArgument]? {
         guard let entry, entry.kind == .extensionCommand,
             let (_, command) = extensions.resolve(entry), !command.arguments.isEmpty
@@ -249,9 +293,6 @@ final class ExtensionCoordinator {
     /// True while the palette is on screen — a toast has somewhere to render only then.
     var isPaletteVisible: Bool { paletteCoordinator.isVisible }
 
-    /// True while an OAuth authorization flow is actively awaiting callback.
-    var isAuthorizing: Bool { extensions.isAuthorizing }
-
     func closeMainWindow() {
         paletteCoordinator.hidePalette(restoreFocus: false)
     }
@@ -263,6 +304,17 @@ final class ExtensionCoordinator {
 
     func clearSearchBar() {
         palette.query = ""
+    }
+
+    var extensionSearch: ExtensionSearchState.Screen? {
+        guard palette.mode == .extensionCommand else { return nil }
+        return ExtensionSearchState.Screen(query: palette.query, selection: palette.selection)
+    }
+
+    func showExtensionSearch(_ search: ExtensionSearchState.Screen, tree: RenderTree) {
+        let count = ExtensionScreen(tree: tree, query: search.query).items.count
+        palette.query = search.query
+        palette.selection = min(max(search.selection, 0), max(count - 1, 0))
     }
 
     /// Its own window: a no-view command closes the palette before the pill is done.
